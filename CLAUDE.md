@@ -233,3 +233,12 @@ docker logs -f n8n-claw
 | `172.17.0.1` for internal service URLs | Docker containers can't reach `localhost` |
 
 ---
+
+## Local Dev Context
+
+Private dev context is kept in gitignored files — never in this file:
+
+- **`CLAUDE.local.md`** — live instance URL, SSH alias, local dev workflow (gitignored)
+- **`docs/infrastructure.md`** — full operational reference: workflow IDs, credentials, server state (gitignored)
+
+See `CLAUDE.local.example.md` for the template structure.
