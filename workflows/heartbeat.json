@@ -190,7 +190,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Update heartbeat_config last_run\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\nconst reason = $input.first().json.reason || 'proactive';\nconst checkName = reason === 'morning_briefing' ? 'morning_briefing' : 'heartbeat';\n\nawait http({\n  method: 'PATCH',\n  url: `${SUPABASE_URL}/rest/v1/heartbeat_config?check_name=eq.${checkName}`,\n  headers: {\n    'apikey': SUPABASE_KEY,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: { last_run: new Date().toISOString() }\n});\n\nreturn [{ json: { status: 'sent', check_name: checkName, timestamp: new Date().toISOString() } }];"
+        "jsCode": "// Update heartbeat_config last_run\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\nconst reason = $('Call Claude Haiku').first().json.reason || 'proactive';\nconst checkName = reason === 'morning_briefing' ? 'morning_briefing' : 'heartbeat';\n\nawait http({\n  method: 'PATCH',\n  url: `${SUPABASE_URL}/rest/v1/heartbeat_config?check_name=eq.${checkName}`,\n  headers: {\n    'apikey': SUPABASE_KEY,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: { last_run: new Date().toISOString() }\n});\n\nreturn [{ json: { status: 'sent', check_name: checkName, timestamp: new Date().toISOString() } }];"
       },
       "id": "update-heartbeat",
       "name": "Update Heartbeat",
