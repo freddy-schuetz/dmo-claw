@@ -1027,6 +1027,9 @@ if [ -n "$PROACTIVE_CHOICE" ]; then
     " 2>/dev/null
     echo -e "  ${GREEN}✅ Heartbeat config seeded (proactive — heartbeat enabled)${NC}"
   else
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "
+    UPDATE public.heartbeat_config SET enabled = false WHERE check_name = 'heartbeat';
+    " 2>/dev/null
     echo -e "  ${GREEN}✅ Heartbeat config seeded (reactive — heartbeat disabled)${NC}"
   fi
 else
