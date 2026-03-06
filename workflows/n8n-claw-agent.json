@@ -103,6 +103,17 @@
       "main": [
         [
           {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
             "node": "Normalize Message",
             "type": "main",
             "index": 0
@@ -396,7 +407,7 @@
             {
               "outputKey": "text",
               "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
@@ -411,7 +422,7 @@
             {
               "outputKey": "voice",
               "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
@@ -426,11 +437,11 @@
             {
               "outputKey": "photo",
               "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
-                    "operator": { "type": "object", "operation": "exists", "singleValue": true },
+                    "operator": { "type": "array", "operation": "exists", "singleValue": true },
                     "leftValue": "={{ $json.message.photo }}",
                     "rightValue": ""
                   }
@@ -441,7 +452,7 @@
             {
               "outputKey": "document",
               "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
@@ -456,7 +467,7 @@
             {
               "outputKey": "location",
               "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
@@ -471,7 +482,8 @@
           ]
         },
         "options": {
-          "fallbackOutput": "extra"
+          "fallbackOutput": "extra",
+          "looseTypeValidation": true
         }
       },
       "id": "route-media-type",
@@ -566,6 +578,23 @@
     },
     {
       "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {
+          "joinPages": true
+        }
+      },
+      "id": "extract-pdf-text",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        50
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "const msg = $('Telegram Trigger').first().json.message;\nconst loc = msg.location;\nreturn [{\n  json: {\n    userMessage: `I'm sharing my location: ${loc.latitude}, ${loc.longitude}`\n  }\n}];"
       },
       "id": "format-location",
@@ -592,7 +621,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\n\n// Determine which media path we came from\nlet userMessage = '';\n\n// Check voice transcription result\ntry {\n  const transcript = $('Transcribe Voice').first()?.json?.text;\n  if (transcript) {\n    userMessage = '[Voice message] ' + transcript;\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check photo\ntry {\n  const photoNode = $('Get Photo File').first();\n  if (photoNode) {\n    userMessage = msg.caption || '[Photo sent - please describe what you see]';\n    // Binary data passes through automatically via passthroughBinaryImages\n    return [{ json: { userMessage }, binary: photoNode.binary }];\n  }\n} catch(e) {}\n\n// Check document\ntry {\n  const docNode = $('Get Doc File').first();\n  if (docNode) {\n    const filename = msg.document?.file_name || 'unknown';\n    userMessage = '[Document: ' + filename + '] ' + (msg.caption || 'Please analyze this document.');\n    return [{ json: { userMessage }, binary: docNode.binary }];\n  }\n} catch(e) {}\n\n// Check location\ntry {\n  const locMsg = $('Format Location').first()?.json?.userMessage;\n  if (locMsg) {\n    return [{ json: { userMessage: locMsg } }];\n  }\n} catch(e) {}\n\n// Check unsupported\ntry {\n  const unsup = $('Unsupported Media').first()?.json?.userMessage;\n  if (unsup) {\n    return [{ json: { userMessage: unsup } }];\n  }\n} catch(e) {}\n\n// Default: text message\nuserMessage = msg.text || '';\nreturn [{ json: { userMessage } }];"
+        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\n\n// Determine which media path we came from\nlet userMessage = '';\n\n// Check voice transcription result\ntry {\n  const transcript = $('Transcribe Voice').first()?.json?.text;\n  if (transcript) {\n    userMessage = '[Voice message] ' + transcript;\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check photo\ntry {\n  const photoNode = $('Get Photo File').first();\n  if (photoNode) {\n    userMessage = msg.caption || '[Photo sent - please describe what you see]';\n    // Binary data passes through automatically via passthroughBinaryImages\n    return [{ json: { userMessage }, binary: photoNode.binary }];\n  }\n} catch(e) {}\n\n// Check document (PDF text extracted by Extract PDF Text node)\ntry {\n  const extracted = $('Extract PDF Text').first();\n  if (extracted) {\n    const filename = msg.document?.file_name || 'unknown';\n    const pdfText = extracted.json.text || '';\n    userMessage = '[Document: ' + filename + ']\\n\\n' + pdfText + '\\n\\n' + (msg.caption || 'Please analyze this document.');\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check location\ntry {\n  const locMsg = $('Format Location').first()?.json?.userMessage;\n  if (locMsg) {\n    return [{ json: { userMessage: locMsg } }];\n  }\n} catch(e) {}\n\n// Check unsupported\ntry {\n  const unsup = $('Unsupported Media').first()?.json?.userMessage;\n  if (unsup) {\n    return [{ json: { userMessage: unsup } }];\n  }\n} catch(e) {}\n\n// Default: text message\nuserMessage = msg.text || '';\nreturn [{ json: { userMessage } }];"
       },
       "id": "normalize-message",
       "name": "Normalize Message",
