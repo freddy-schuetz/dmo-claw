@@ -1,0 +1,103 @@
+{
+  "name": "📥 Review Batch Import",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 3,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fetch-reviews",
+      "name": "Fetch & Import Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, 0],
+      "parameters": {
+        "jsCode": "const baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst headers = {\n  'apikey': serviceKey,\n  'Authorization': 'Bearer ' + serviceKey,\n  'Content-Type': 'application/json'\n};\n\n// Load Google Places API key from template_credentials\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: baseUrl + '/rest/v1/template_credentials?template_id=eq.google-reviews&cred_key=eq.google_places_api_key&select=cred_value',\n  headers\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'No Google Places API key configured. Install google-reviews template first.' } }];\n}\nconst apiKey = creds[0].cred_value;\n\n// Load member businesses with Google Place IDs\nconst businesses = await helpers.httpRequest({\n  method: 'GET',\n  url: baseUrl + '/rest/v1/member_businesses?select=id,name,google_place_id&active=eq.true&google_place_id=not.is.null',\n  headers\n});\n\nif (!businesses || businesses.length === 0) {\n  return [{ json: { result: 'No businesses with Google Place IDs found.', imported: 0 } }];\n}\n\nlet totalImported = 0;\nlet criticalReviews = [];\n\nfor (const biz of businesses) {\n  try {\n    // Fetch reviews from Google Places API (New)\n    const placeDetails = await helpers.httpRequest({\n      method: 'GET',\n      url: 'https://maps.googleapis.com/maps/api/place/details/json'\n        + '?place_id=' + encodeURIComponent(biz.google_place_id)\n        + '&fields=reviews'\n        + '&language=de'\n        + '&key=' + apiKey\n    });\n\n    const reviews = placeDetails.result && placeDetails.result.reviews;\n    if (!reviews || reviews.length === 0) continue;\n\n    for (const review of reviews) {\n      // Use author_url as unique identifier (Google doesn't provide review IDs)\n      const reviewId = (review.author_url || review.author_name || '') + '_' + review.time;\n\n      // Upsert review\n      try {\n        await helpers.httpRequest({\n          method: 'POST',\n          url: baseUrl + '/rest/v1/reviews',\n          headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=minimal' },\n          body: JSON.stringify({\n            business_id: biz.id,\n            google_review_id: reviewId,\n            author: review.author_name || 'Anonym',\n            rating: review.rating,\n            text: review.text || '',\n            published_at: new Date(review.time * 1000).toISOString(),\n            fetched_at: new Date().toISOString()\n          })\n        });\n        totalImported++;\n\n        // Track critical reviews (≤3 stars)\n        if (review.rating <= 3) {\n          criticalReviews.push({\n            business: biz.name,\n            rating: review.rating,\n            author: review.author_name || 'Anonym',\n            text: (review.text || '').substring(0, 100)\n          });\n        }\n      } catch(e) {\n        // Duplicate — skip silently\n      }\n    }\n  } catch(e) {\n    // API error for this business — continue with next\n  }\n}\n\nreturn [{ json: {\n  result: 'Review-Import abgeschlossen',\n  businesses_checked: businesses.length,\n  reviews_imported: totalImported,\n  critical_reviews: criticalReviews\n} }];"
+      }
+    },
+    {
+      "id": "check-critical",
+      "name": "Critical Reviews?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [512, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "crit-check",
+              "leftValue": "={{ $json.critical_reviews.length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alert-code",
+      "name": "Build Alert Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [768, -100],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst reviews = data.critical_reviews;\n\nlet msg = '⚠️ *Neue kritische Bewertungen!*\\n\\n';\nfor (const r of reviews) {\n  msg += '• *' + r.business + '*: ' + '⭐'.repeat(r.rating) + '\\n';\n  msg += '  Von: ' + r.author + '\\n';\n  if (r.text) msg += '  _\"' + r.text + '\"_\\n';\n  msg += '\\n';\n}\nmsg += 'Insgesamt ' + data.reviews_imported + ' Reviews importiert von ' + data.businesses_checked + ' Betrieben.';\n\nreturn [{ json: { message: msg } }];"
+      }
+    },
+    {
+      "id": "send-alert",
+      "name": "Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1024, -100],
+      "parameters": {
+        "chatId": "{{TELEGRAM_CHAT_ID}}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Fetch & Import Reviews", "type": "main", "index": 0 }]]
+    },
+    "Fetch & Import Reviews": {
+      "main": [[{ "node": "Critical Reviews?", "type": "main", "index": 0 }]]
+    },
+    "Critical Reviews?": {
+      "main": [
+        [{ "node": "Build Alert Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Build Alert Message": {
+      "main": [[{ "node": "Telegram Alert", "type": "main", "index": 0 }]]
+    }
+  }
+}
