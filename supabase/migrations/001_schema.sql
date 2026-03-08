@@ -1109,3 +1109,83 @@ GRANT USAGE ON SCHEMA public TO anon, service_role;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT ALL ON SEQUENCE public.template_credentials_id_seq TO anon, authenticated, service_role;
+
+-- ============================================================
+-- DMO-specific tables (Tourism Platform)
+-- ============================================================
+
+-- DMO staff with roles
+CREATE TABLE IF NOT EXISTS public.dmo_users (
+  telegram_id   BIGINT PRIMARY KEY,
+  oi_email      TEXT UNIQUE,
+  name          TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'readonly',
+  active        BOOLEAN DEFAULT true,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT dmo_users_role_check CHECK (role IN ('marketing', 'member_relations', 'admin', 'readonly'))
+);
+
+-- Member businesses (hotels, restaurants, etc.)
+CREATE TABLE IF NOT EXISTS public.member_businesses (
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL,
+  category        TEXT,
+  google_place_id TEXT,
+  email           TEXT,
+  phone           TEXT,
+  address         TEXT,
+  website         TEXT,
+  active          BOOLEAN DEFAULT true,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_member_businesses_category
+  ON public.member_businesses (category);
+CREATE INDEX IF NOT EXISTS idx_member_businesses_place_id
+  ON public.member_businesses (google_place_id) WHERE google_place_id IS NOT NULL;
+
+-- Google Reviews (locally cached)
+CREATE TABLE IF NOT EXISTS public.reviews (
+  id              SERIAL PRIMARY KEY,
+  business_id     INTEGER REFERENCES public.member_businesses(id) ON DELETE CASCADE,
+  google_review_id TEXT UNIQUE,
+  author          TEXT,
+  rating          INTEGER CHECK (rating >= 1 AND rating <= 5),
+  text            TEXT,
+  published_at    TIMESTAMPTZ,
+  answered        BOOLEAN DEFAULT false,
+  answer_text     TEXT,
+  fetched_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_business ON public.reviews (business_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_rating ON public.reviews (rating);
+CREATE INDEX IF NOT EXISTS idx_reviews_fetched ON public.reviews (fetched_at DESC);
+
+-- Scheduled social media posts
+CREATE TABLE IF NOT EXISTS public.scheduled_posts (
+  id              SERIAL PRIMARY KEY,
+  platform        TEXT NOT NULL,
+  caption         TEXT NOT NULL,
+  image_url       TEXT,
+  scheduled_at    TIMESTAMPTZ NOT NULL,
+  status          TEXT DEFAULT 'pending',
+  error_message   TEXT,
+  published_post_id TEXT,
+  created_by      TEXT,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT scheduled_posts_status_check CHECK (status IN ('pending', 'published', 'failed', 'cancelled'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_posts_pending
+  ON public.scheduled_posts (scheduled_at) WHERE status = 'pending';
+
+-- GRANTs for DMO tables
+GRANT ALL ON TABLE public.dmo_users TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.member_businesses TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.member_businesses_id_seq TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.reviews TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.reviews_id_seq TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.scheduled_posts TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.scheduled_posts_id_seq TO anon, authenticated, service_role;
