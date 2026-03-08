@@ -1227,6 +1227,10 @@ if [ "$INSTALL_MODE" = "update" ]; then
   else
     echo "  Workflows + personality unchanged (use --force to reimport)"
   fi
+  echo ""
+  echo -e "  ${GREEN}Credentials (for manual n8n setup):${NC}"
+  echo "    Postgres:  Host: db | DB: postgres | User: postgres | Pass: ${POSTGRES_PASSWORD} | SSL: disable"
+  echo "    Webhook:   Bearer ${WEBHOOK_BEARER_TOKEN}"
   if [ -z "${EMBEDDING_API_KEY}" ]; then
     echo ""
     echo -e "  ${CYAN}💡 Tip: Run './setup.sh' again to configure semantic memory search (RAG)${NC}"
