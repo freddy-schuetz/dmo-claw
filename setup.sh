@@ -102,7 +102,7 @@ if docker volume inspect dmo-claw_n8n_data > /dev/null 2>&1; then
 fi
 
 ask() {
-  local var="$1" prompt="$2" current="${!1}" secret="$4"
+  local var="$1" prompt="$2" default="$3" secret="$4" current="${!1}"
   if [ -n "$current" ] && [[ "$current" != your_* ]]; then
     return
   fi
@@ -111,6 +111,10 @@ ask() {
       read -rsp "  $prompt: " val; echo
     else
       read -rp  "  $prompt: " val
+    fi
+    # Use default if provided and input is empty
+    if [ -z "$val" ] && [ -n "$default" ]; then
+      val="$default"
     fi
     [ -n "$val" ] && break
     echo -e "  ${RED}Cannot be empty.${NC}"
@@ -211,19 +215,27 @@ echo -e "${GREEN}⚙️  Configuration${NC}"
 echo "────────────────────────────"
 ask "N8N_API_KEY"        "n8n API Key (Settings → API → Create key)" "" 1
 ask "ANTHROPIC_API_KEY"  "Anthropic API Key (from console.anthropic.com)" "" 1
-ask "WEBHOOK_BEARER_TOKEN" "Webhook Bearer Token (for OpenWebUI auth — auto-generated if empty)" "" 0
+AUTO_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+ask "WEBHOOK_BEARER_TOKEN" "Webhook Bearer Token (for OpenWebUI auth — press Enter to auto-generate)" "$AUTO_TOKEN" 0
 echo ""
-# Auto-generate webhook bearer token if not set
+# Ensure token is set (fallback for edge cases)
 _load_env
 if [ -z "$WEBHOOK_BEARER_TOKEN" ] || [[ "$WEBHOOK_BEARER_TOKEN" == "your_"* ]]; then
-  WEBHOOK_BEARER_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+  WEBHOOK_BEARER_TOKEN="$AUTO_TOKEN"
   set_env "WEBHOOK_BEARER_TOKEN" "$WEBHOOK_BEARER_TOKEN"
   echo -e "  ${GREEN}✅ Generated webhook bearer token${NC}"
 fi
 echo ""
 echo -e "  ${YELLOW}Optional: Domain for HTTPS${NC}"
 echo "  Leave empty to skip (you can set up HTTPS later)"
-ask "DOMAIN" "Domain name (e.g. n8n.yourdomain.com, or press Enter to skip)" "" 0
+# DOMAIN is optional — don't use ask() which requires non-empty input
+if [ -z "$DOMAIN" ] || [[ "$DOMAIN" == "your_"* ]]; then
+  read -rp "  Domain name (e.g. n8n.yourdomain.com, or press Enter to skip): " DOMAIN
+  if [ -n "$DOMAIN" ]; then
+    set_env "DOMAIN" "$DOMAIN"
+    export DOMAIN
+  fi
+fi
 _load_env
 
 # Ask about external reverse proxy (only if domain is set)
