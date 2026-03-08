@@ -210,11 +210,18 @@ fi
 echo -e "${GREEN}⚙️  Configuration${NC}"
 echo "────────────────────────────"
 ask "N8N_API_KEY"        "n8n API Key (Settings → API → Create key)" "" 1
-ask "TELEGRAM_BOT_TOKEN" "Telegram Bot Token (from @BotFather)"      "" 1
-ask "TELEGRAM_CHAT_ID"   "Your Telegram Chat ID (from @userinfobot)" "" 0
 ask "ANTHROPIC_API_KEY"  "Anthropic API Key (from console.anthropic.com)" "" 1
+ask "WEBHOOK_BEARER_TOKEN" "Webhook Bearer Token (for OpenWebUI auth — auto-generated if empty)" "" 0
 echo ""
-echo -e "  ${YELLOW}Optional: Domain for HTTPS (required for Telegram webhooks)${NC}"
+# Auto-generate webhook bearer token if not set
+_load_env
+if [ -z "$WEBHOOK_BEARER_TOKEN" ] || [[ "$WEBHOOK_BEARER_TOKEN" == "your_"* ]]; then
+  WEBHOOK_BEARER_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+  set_env "WEBHOOK_BEARER_TOKEN" "$WEBHOOK_BEARER_TOKEN"
+  echo -e "  ${GREEN}✅ Generated webhook bearer token${NC}"
+fi
+echo ""
+echo -e "  ${YELLOW}Optional: Domain for HTTPS${NC}"
 echo "  Leave empty to skip (you can set up HTTPS later)"
 ask "DOMAIN" "Domain name (e.g. n8n.yourdomain.com, or press Enter to skip)" "" 0
 _load_env
@@ -376,7 +383,7 @@ elif [ -n "$DOMAIN" ] && [[ "$DOMAIN" != "your_"* ]] && [ "$SKIP_REVERSE_PROXY" 
   N8N_ACCESS_URL="https://${DOMAIN}"
 else
   echo -e "\n${YELLOW}⚠️  No domain configured — running on HTTP${NC}"
-  echo "  Telegram webhooks require HTTPS. Add a domain later and re-run setup.sh"
+  echo "  HTTPS recommended for production. Add a domain later and re-run setup.sh"
 fi
 
 # ── 9. Apply DB schema ───────────────────────────────────────
@@ -396,7 +403,7 @@ docker kill --signal=SIGUSR1 $(docker ps -q --filter name=rest) 2>/dev/null || t
 N8N_BASE="${N8N_URL:-http://localhost:5678}"
 ANTHROPIC_CRED_ID="${ANTHROPIC_CRED_ID:-REPLACE_WITH_YOUR_CREDENTIAL_ID}"
 POSTGRES_CRED_ID="REPLACE_WITH_YOUR_CREDENTIAL_ID"
-TELEGRAM_CRED_ID=""
+WEBHOOK_AUTH_CRED_ID=""
 
 # ── 10. Wait for n8n API to be ready ────────────────────────
 echo -e "\n${GREEN}⏳ Waiting for n8n API...${NC}"
@@ -438,11 +445,11 @@ create_cred() {
 
 # Check if credentials already exist before creating
 EXISTING_CREDS=$(curl -s "${N8N_BASE}/api/v1/credentials" -H "X-N8N-API-KEY: ${N8N_API_KEY}")
-EXISTING_TELEGRAM_ID=$(echo "$EXISTING_CREDS" | python3 -c "
+EXISTING_WEBHOOK_AUTH_ID=$(echo "$EXISTING_CREDS" | python3 -c "
 import sys,json
 creds=json.load(sys.stdin).get('data',[])
 for c in creds:
-    if c.get('type')=='telegramApi': print(c['id']); break
+    if c.get('type')=='httpHeaderAuth': print(c['id']); break
 " 2>/dev/null)
 EXISTING_POSTGRES_ID=$(echo "$EXISTING_CREDS" | python3 -c "
 import sys,json
@@ -450,19 +457,13 @@ creds=json.load(sys.stdin).get('data',[])
 for c in creds:
     if c.get('type')=='postgres': print(c['id']); break
 " 2>/dev/null)
-EXISTING_OPENAI_ID=$(echo "$EXISTING_CREDS" | python3 -c "
-import sys,json
-creds=json.load(sys.stdin).get('data',[])
-for c in creds:
-    if c.get('type')=='openAiApi': print(c['id']); break
-" 2>/dev/null)
 
-if [ -n "$EXISTING_TELEGRAM_ID" ]; then
-  TELEGRAM_CRED_ID="$EXISTING_TELEGRAM_ID"
-  echo "  ✅ Telegram Bot → ${TELEGRAM_CRED_ID} (existing)"
+if [ -n "$EXISTING_WEBHOOK_AUTH_ID" ]; then
+  WEBHOOK_AUTH_CRED_ID="$EXISTING_WEBHOOK_AUTH_ID"
+  echo "  ✅ DMO Claw Webhook Auth → ${WEBHOOK_AUTH_CRED_ID} (existing)"
 else
-  TELEGRAM_CRED_ID=$(create_cred "Telegram Bot" "telegramApi" "{\"accessToken\":\"${TELEGRAM_BOT_TOKEN}\"}")
-  [ -z "$TELEGRAM_CRED_ID" ] && echo -e "  ${YELLOW}⚠️  Telegram credential failed — will patch from existing${NC}" || echo "  ✅ Telegram Bot → ${TELEGRAM_CRED_ID} (created)"
+  WEBHOOK_AUTH_CRED_ID=$(create_cred "DMO Claw Webhook Auth" "httpHeaderAuth" "{\"name\":\"Authorization\",\"value\":\"Bearer ${WEBHOOK_BEARER_TOKEN}\"}")
+  [ -z "$WEBHOOK_AUTH_CRED_ID" ] && echo -e "  ${YELLOW}⚠️  Webhook Auth credential failed — will patch from existing${NC}" || echo "  ✅ DMO Claw Webhook Auth → ${WEBHOOK_AUTH_CRED_ID} (created)"
 fi
 
 if [ -n "$EXISTING_POSTGRES_ID" ]; then
@@ -487,20 +488,6 @@ PGEOF
   else
     echo "  ✅ Supabase Postgres → ${POSTGRES_CRED_ID} (created)"
   fi
-fi
-
-# OpenAI credential (optional — for voice transcription)
-OPENAI_CRED_ID=""
-if [ -n "$OPENAI_API_KEY" ] && [[ "$OPENAI_API_KEY" != "your_"* ]]; then
-  if [ -n "$EXISTING_OPENAI_ID" ]; then
-    OPENAI_CRED_ID="$EXISTING_OPENAI_ID"
-    echo "  ✅ OpenAI API → ${OPENAI_CRED_ID} (existing)"
-  else
-    OPENAI_CRED_ID=$(create_cred "OpenAI API" "openAiApi" "{\"apiKey\":\"${OPENAI_API_KEY}\"}")
-    [ -z "$OPENAI_CRED_ID" ] && echo -e "  ${YELLOW}⚠️  OpenAI credential failed — voice transcription won't work${NC}" || echo "  ✅ OpenAI API → ${OPENAI_CRED_ID} (created)"
-  fi
-else
-  echo -e "  ${YELLOW}ℹ️  OpenAI API Key not set — voice transcription disabled${NC}"
 fi
 
 fi  # end INSTALL_MODE guard for credentials
@@ -554,7 +541,6 @@ for wf in data.get('data', []):
       -e "s|{{SUPABASE_URL}}|http://172.17.0.1:8000|g" \
       -e "s|{{SUPABASE_SERVICE_KEY}}|${SUPABASE_SERVICE_KEY}|g" \
       -e "s|{{SUPABASE_ANON_KEY}}|${SUPABASE_ANON_KEY}|g" \
-      -e "s|{{TELEGRAM_CHAT_ID}}|${TELEGRAM_CHAT_ID}|g" \
       -e "s|{{CREDENTIAL_FORM_WEBHOOK_ID}}|${CREDENTIAL_FORM_WEBHOOK_ID}|g" \
       "$out"
 
@@ -584,16 +570,13 @@ for f in workflows/*.json; do
     -e "s|{{SUPABASE_URL}}|http://172.17.0.1:8000|g" \
     -e "s|{{SUPABASE_SERVICE_KEY}}|${SUPABASE_SERVICE_KEY}|g" \
     -e "s|{{SUPABASE_ANON_KEY}}|${SUPABASE_ANON_KEY}|g" \
-    -e "s|{{TELEGRAM_CHAT_ID}}|${TELEGRAM_CHAT_ID}|g" \
     -e "s|{{CREDENTIAL_FORM_WEBHOOK_ID}}|${CREDENTIAL_FORM_WEBHOOK_ID}|g" \
     "$out"
   # Credential ID replacements — only if IDs are actually set
-  [ -n "$TELEGRAM_CRED_ID" ] && [ "$TELEGRAM_CRED_ID" != "ERR" ] && \
-    sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Telegram Bot\"|${TELEGRAM_CRED_ID}\", \"name\": \"Telegram Bot\"|g" "$out"
+  [ -n "$WEBHOOK_AUTH_CRED_ID" ] && [ "$WEBHOOK_AUTH_CRED_ID" != "ERR" ] && \
+    sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"DMO Claw Webhook Auth\"|${WEBHOOK_AUTH_CRED_ID}\", \"name\": \"DMO Claw Webhook Auth\"|g" "$out"
   [ -n "$POSTGRES_CRED_ID" ] && [ "$POSTGRES_CRED_ID" != "REPLACE_WITH_YOUR_CREDENTIAL_ID" ] && \
     sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Supabase Postgres\"|${POSTGRES_CRED_ID}\", \"name\": \"Supabase Postgres\"|g" "$out"
-  [ -n "$OPENAI_CRED_ID" ] && \
-    sed -i "s|REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID\", \"name\": \"OpenAI API\"|${OPENAI_CRED_ID}\", \"name\": \"OpenAI API\"|g" "$out"
 done
 IMPORT_ORDER="mcp-client reminder-factory mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report dmo-claw"
 
@@ -677,11 +660,11 @@ print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'set
   if [ -n "$PATCHED" ]; then
     # Also patch credential IDs: fetch real IDs from n8n and replace
     CRED_LIST=$(curl -s "${N8N_BASE}/api/v1/credentials" -H "X-N8N-API-KEY: ${N8N_API_KEY}")
-    REAL_TELEGRAM_ID=$(echo "$CRED_LIST" | python3 -c "
+    REAL_WEBHOOK_AUTH_ID=$(echo "$CRED_LIST" | python3 -c "
 import sys,json
 creds=json.load(sys.stdin).get('data',[])
 for c in creds:
-    if c.get('type')=='telegramApi': print(c['id']); break
+    if c.get('type')=='httpHeaderAuth': print(c['id']); break
 " 2>/dev/null)
     REAL_ANTHROPIC_ID=$(echo "$CRED_LIST" | python3 -c "
 import sys,json
@@ -700,10 +683,9 @@ for c in creds:
     FINAL=$(echo "$PATCHED" | python3 -c "
 import sys, json
 raw = sys.stdin.read()
-if '${REAL_TELEGRAM_ID}': raw = raw.replace('REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Telegram Bot\"', '${REAL_TELEGRAM_ID}\", \"name\": \"Telegram Bot\"')
+if '${REAL_WEBHOOK_AUTH_ID}': raw = raw.replace('REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"DMO Claw Webhook Auth\"', '${REAL_WEBHOOK_AUTH_ID}\", \"name\": \"DMO Claw Webhook Auth\"')
 if '${REAL_ANTHROPIC_ID}': raw = raw.replace('REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Anthropic API\"', '${REAL_ANTHROPIC_ID}\", \"name\": \"Anthropic API\"')
 if '${REAL_POSTGRES_ID}': raw = raw.replace('REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Supabase Postgres\"', '${REAL_POSTGRES_ID}\", \"name\": \"Supabase Postgres\"')
-if '${OPENAI_CRED_ID}': raw = raw.replace('REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID\", \"name\": \"OpenAI API\"', '${OPENAI_CRED_ID}\", \"name\": \"OpenAI API\"')
 print(raw)
 " 2>/dev/null)
 
@@ -714,7 +696,7 @@ print(raw)
     echo "  ✅ WorkflowBuilder: ${WF_IDS[workflow-builder]}"
     echo "  ✅ MCP Builder:     ${WF_IDS[mcp-builder]}"
     echo "  ✅ Library Manager: ${WF_IDS[mcp-library-manager]}"
-    [ -n "$REAL_TELEGRAM_ID" ]  && echo "  ✅ Telegram cred:   ${REAL_TELEGRAM_ID}"
+    [ -n "$REAL_WEBHOOK_AUTH_ID" ] && echo "  ✅ Webhook Auth:    ${REAL_WEBHOOK_AUTH_ID}"
     [ -n "$REAL_POSTGRES_ID" ]  && echo "  ✅ Postgres cred:   ${REAL_POSTGRES_ID}"
     [ -n "$REAL_ANTHROPIC_ID" ] && echo "  ✅ Anthropic cred:  ${REAL_ANTHROPIC_ID} (if already added)"
   fi
@@ -796,28 +778,8 @@ if [ "$INSTALL_MODE" = "update" ] && [ "$FORCE_FLAG" != "--force" ] && [ -z "${E
       ON CONFLICT (tool_name) DO UPDATE SET config = EXCLUDED.config, enabled = true, updated_at = now();
     " > /dev/null 2>&1
     echo -e "  ${GREEN}✅ Embeddings configured (${EMBEDDING_PROVIDER}/${EMBEDDING_MODEL})${NC}"
-    # Reuse OpenAI embedding key for voice transcription credential
-    if [ "$EMBEDDING_PROVIDER" = "openai" ]; then
-      OPENAI_API_KEY="$EMBEDDING_API_KEY"
-      set_env OPENAI_API_KEY "$OPENAI_API_KEY"
-      echo -e "  ${GREEN}ℹ️  Same key will be used for voice transcription (Whisper)${NC}"
-    fi
   else
     echo -e "  ⏭️  Skipped — using keyword search"
-  fi
-  # Voice transcription: ask for OpenAI key if not already set
-  if [ -z "$OPENAI_API_KEY" ] || [[ "$OPENAI_API_KEY" == "your_"* ]]; then
-    echo ""
-    echo -e "  ${GREEN}🎤 Voice Transcription (optional)${NC}"
-    echo "  OpenAI API key enables voice message transcription via Whisper."
-    read -rp "  OpenAI API Key [skip]: " OPENAI_API_KEY_INPUT
-    if [ -n "$OPENAI_API_KEY_INPUT" ]; then
-      OPENAI_API_KEY="$OPENAI_API_KEY_INPUT"
-      set_env OPENAI_API_KEY "$OPENAI_API_KEY"
-      echo -e "  ${GREEN}✅ Voice transcription enabled${NC}"
-    else
-      echo -e "  ⏭️  Skipped — voice messages disabled"
-    fi
   fi
   # Write anthropic key to DB in update mode too
   if [ -n "$ANTHROPIC_API_KEY" ] && [[ "$ANTHROPIC_API_KEY" != "your_"* ]]; then
@@ -837,14 +799,9 @@ else
 # Load existing personalization as defaults (for --force reconfiguration)
 EXISTING_BOT_NAME=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
   "SELECT content FROM soul WHERE key='name' LIMIT 1" 2>/dev/null | xargs)
-EXISTING_USER=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
-  "SELECT display_name FROM user_profiles WHERE user_id = 'telegram:${TELEGRAM_CHAT_ID}' LIMIT 1" 2>/dev/null | xargs)
-EXISTING_TZ=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
-  "SELECT timezone FROM user_profiles WHERE user_id = 'telegram:${TELEGRAM_CHAT_ID}' LIMIT 1" 2>/dev/null | xargs)
-EXISTING_CTX=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
-  "SELECT context FROM user_profiles WHERE user_id = 'telegram:${TELEGRAM_CHAT_ID}' LIMIT 1" 2>/dev/null | xargs)
-EXISTING_LANG=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
-  "SELECT preferences->>'language' FROM user_profiles WHERE user_id = 'telegram:${TELEGRAM_CHAT_ID}' LIMIT 1" 2>/dev/null | xargs)
+# Try to find admin email from dmo_users or user_profiles
+EXISTING_ADMIN_EMAIL=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT oi_email FROM dmo_users WHERE role='admin' LIMIT 1" 2>/dev/null | xargs)
 
 echo -e "\n${GREEN}🧙 Personalization setup${NC}"
 echo "────────────────────────────"
@@ -854,9 +811,10 @@ if [ -n "$EXISTING_BOT_NAME" ]; then
 fi
 echo ""
 
+ADMIN_EMAIL=$(cli_ask "Admin email (OpenWebUI login)" "${EXISTING_ADMIN_EMAIL:-admin@example.com}")
 SYS_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo "UTC")
 BOT_NAME=$(cli_ask "Agent name" "${EXISTING_BOT_NAME:-Assistant}")
-USER_DISPLAY=$(cli_ask "Your name" "${EXISTING_USER:-User}")
+USER_DISPLAY=$(cli_ask "Your name" "Admin")
 PREFERRED_LANG=$(cli_ask "Preferred language" "${EXISTING_LANG:-English}")
 CTX=$(cli_ask "What will you use this agent for" "${EXISTING_CTX:-Personal assistant and automation}")
 TIMEZONE=$(cli_ask "Timezone" "${EXISTING_TZ:-$SYS_TZ}")
@@ -908,7 +866,7 @@ echo ""
 
 echo -e "${GREEN}👥 DMO User Setup${NC}"
 echo "────────────────────────────"
-echo "Add DMO team members (they need a Telegram account)."
+echo "Add DMO team members (they need an OpenWebUI account)."
 echo "Leave empty to skip."
 echo ""
 
@@ -943,7 +901,7 @@ echo ""
 echo -e "${GREEN}🧠 RAG / Vector Memory (optional)${NC}"
 echo "  For semantic memory search, provide an embedding API key."
 echo "  Supported providers: openai (default), voyage, ollama"
-echo "  If you use OpenAI, the same key also enables voice transcription (Whisper)."
+echo "  If you use OpenAI, the same key is used for embeddings."
 if [ -n "$EMBEDDING_API_KEY" ]; then
   echo "  Current key: ${EMBEDDING_API_KEY:0:8}...  (Enter to keep, or enter new key)"
   read -rp "  Embedding API Key [keep]: " EMBEDDING_API_KEY_INPUT
@@ -963,30 +921,8 @@ if [ -n "$EMBEDDING_API_KEY_INPUT" ]; then
   set_env EMBEDDING_PROVIDER "$EMBEDDING_PROVIDER"
   set_env EMBEDDING_MODEL "$EMBEDDING_MODEL"
   echo -e "  ${GREEN}✅ Embeddings configured (${EMBEDDING_PROVIDER}/${EMBEDDING_MODEL})${NC}"
-  # Reuse OpenAI embedding key for voice transcription credential
-  if [ "$EMBEDDING_PROVIDER" = "openai" ]; then
-    OPENAI_API_KEY="$EMBEDDING_API_KEY"
-    set_env OPENAI_API_KEY "$OPENAI_API_KEY"
-    echo -e "  ${GREEN}ℹ️  Same key will be used for voice transcription (Whisper)${NC}"
-  fi
 else
   echo -e "  ⏭️  Skipped — using keyword search"
-fi
-
-# Voice transcription: ask for OpenAI key if not already set (non-openai embedding or no embedding)
-if [ -z "$OPENAI_API_KEY" ] || [[ "$OPENAI_API_KEY" == "your_"* ]]; then
-  echo ""
-  echo -e "${GREEN}🎤 Voice Transcription (optional)${NC}"
-  echo "  OpenAI API key enables voice message transcription via Whisper."
-  echo "  Leave empty to skip — voice messages won't be supported."
-  read -rp "  OpenAI API Key [skip]: " OPENAI_API_KEY_INPUT
-  if [ -n "$OPENAI_API_KEY_INPUT" ]; then
-    OPENAI_API_KEY="$OPENAI_API_KEY_INPUT"
-    set_env OPENAI_API_KEY "$OPENAI_API_KEY"
-    echo -e "  ${GREEN}✅ Voice transcription enabled${NC}"
-  else
-    echo -e "  ⏭️  Skipped — voice messages disabled"
-  fi
 fi
 
 # Write embedding + anthropic config to DB (tools_config table)
@@ -1025,7 +961,7 @@ lang    = esc('${PREFERRED_LANG}')
 style   = esc('${STYLE}')
 proact  = esc('${PROACTIVE}')
 ctx     = esc('${CTX}')
-chat_id = '${TELEGRAM_CHAT_ID}'
+admin_email = '${ADMIN_EMAIL}'
 mcp_url = '${N8N_URL_FOR_MCP}'
 tz      = esc('${TIMEZONE:-UTC}')
 dmo_org       = esc('${DMO_ORG}')
@@ -1041,7 +977,7 @@ INSERT INTO public.soul (key, content) VALUES
   ('vibe', '{style}'),
   ('proactive', '{proact}'),
   ('boundaries', 'Keep private data private. Ask before external actions.'),
-  ('communication', 'You communicate via Telegram. Reply directly.'),
+  ('communication', 'You communicate via OpenWebUI webhook. Reply directly.'),
   ('organization_name', '{dmo_org}'),
   ('region', '{dmo_region}'),
   ('target_audience', 'Touristen, Wanderer, Skifahrer, Familien in der Region'),
@@ -1052,7 +988,7 @@ INSERT INTO public.soul (key, content) VALUES
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
 INSERT INTO public.user_profiles (user_id, name, display_name, timezone, context, preferences, setup_done, setup_step)
-VALUES ('telegram:{chat_id}', '{uname}', '{user}', '{tz}', '{ctx}', '{{"language": "{lang}"}}'::jsonb, false, 0)
+VALUES ('oi:{admin_email}', '{uname}', '{user}', '{tz}', '{ctx}', '{{"language": "{lang}"}}'::jsonb, false, 0)
 ON CONFLICT (user_id) DO UPDATE SET
   display_name = EXCLUDED.display_name, context = EXCLUDED.context, timezone = EXCLUDED.timezone,
   preferences = COALESCE(user_profiles.preferences, '{{}}'::jsonb) || '{{"language": "{lang}"}}'::jsonb;
@@ -1151,10 +1087,8 @@ HTTP (http_request):
   ('task_management', 'You can manage tasks for the user via the Task Manager tool.
 
 IMPORTANT - REMINDERS AND TASKS:
-- When the user says "remind me to..." or "don''t forget...", ALWAYS do BOTH:
-  1. Create a Reminder (timed Telegram notification)
-  2. Create a Task via Task Manager (so it shows up in task lists and briefings)
-- This ensures nothing falls through the cracks.
+- When the user says "remind me to..." or "don''t forget...", create a Task via Task Manager
+- Tasks show up in task lists and briefings
 
 WHEN TO CREATE TASKS:
 - User says "remind me to...", "I need to...", "add a task...", "don''t forget..."
@@ -1194,8 +1128,6 @@ PREFERENCES (set_preference action):
   * Posts planen ("Plane den Post für morgen 17 Uhr")
   * Aufgaben verwalten ("Erstelle eine Aufgabe: Newsletter bis Freitag")
   * Erinnerungen setzen ("Erinnere mich in 2 Stunden an die Presseaussendung")
-  * Fotos und PDFs analysieren (einfach senden)
-  * Sprachnachrichten verstehen (einfach aufnehmen)
   * Websuche ("Was sind aktuelle Trends im Alpentourismus?")
 - Respond in the user''s language (check their language preference)
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
@@ -1214,7 +1146,7 @@ PYEOF2
 # Write user profile to DB (so --force picks up existing values next time)
 LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "
 INSERT INTO public.user_profiles (user_id, display_name, timezone, context)
-VALUES ('telegram:${TELEGRAM_CHAT_ID}', '$(echo "$USER_DISPLAY" | sed "s/'/''/g")', '${TIMEZONE:-UTC}', '$(echo "$CTX" | sed "s/'/''/g")')
+VALUES ('oi:${ADMIN_EMAIL}', '$(echo "$USER_DISPLAY" | sed "s/'/''/g")', '${TIMEZONE:-UTC}', '$(echo "$CTX" | sed "s/'/''/g")')
 ON CONFLICT (user_id) DO UPDATE SET
   display_name = EXCLUDED.display_name,
   timezone = EXCLUDED.timezone,
@@ -1335,7 +1267,10 @@ echo "     Open MCP Builder workflow → click the LLM node"
 echo "     → select 'Anthropic API' as the chat model"
 echo "     (not set by default due to n8n credential linking)"
 echo ""
-echo "    5. Message your Telegram bot!"
+echo "    5. Deploy the Pipe Function in OpenWebUI (see docs/pipe-function.py)"
+echo "       Valves: N8N_WEBHOOK_URL=${N8N_FINAL_URL}/webhook/dmo-claw"
+echo "       Valves: BEARER_TOKEN=${WEBHOOK_BEARER_TOKEN}"
+echo "    6. Chat with your agent in OpenWebUI!"
 echo ""
 if [ -z "$DOMAIN" ] || [[ "$DOMAIN" == "your_"* ]]; then
 echo -e "  ${YELLOW}HTTPS: Point a domain here → re-run: DOMAIN=n8n.yourdomain.com ./setup.sh${NC}"
