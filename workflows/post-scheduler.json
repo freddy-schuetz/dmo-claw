@@ -1,0 +1,40 @@
+{
+  "name": "📤 Post Scheduler",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "publish-pending",
+      "name": "Publish Pending Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, 0],
+      "parameters": {
+        "jsCode": "const baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': serviceKey,\n  'Authorization': 'Bearer ' + serviceKey,\n  'Content-Type': 'application/json'\n};\n\n// Find pending posts that are due\nconst now = new Date().toISOString();\nconst posts = await helpers.httpRequest({\n  method: 'GET',\n  url: baseUrl + '/rest/v1/scheduled_posts?status=eq.pending&scheduled_at=lte.' + now + '&order=scheduled_at.asc&limit=5',\n  headers: pgHeaders\n});\n\nif (!posts || posts.length === 0) {\n  return [{ json: { published: 0 } }];\n}\n\n// Load Instagram credentials\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: baseUrl + '/rest/v1/template_credentials?template_id=eq.instagram-post&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst credMap = {};\nfor (const c of (creds || [])) credMap[c.cred_key] = c.cred_value;\n\nlet published = 0;\n\nfor (const post of posts) {\n  if (post.platform !== 'instagram') {\n    // Mark unsupported platforms as failed\n    await helpers.httpRequest({\n      method: 'PATCH',\n      url: baseUrl + '/rest/v1/scheduled_posts?id=eq.' + post.id,\n      headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n      body: JSON.stringify({ status: 'failed', error_message: 'Platform nicht unterstützt: ' + post.platform })\n    });\n    continue;\n  }\n\n  const token = credMap.instagram_token;\n  const userId = credMap.instagram_user_id;\n\n  if (!token || !userId) {\n    await helpers.httpRequest({\n      method: 'PATCH',\n      url: baseUrl + '/rest/v1/scheduled_posts?id=eq.' + post.id,\n      headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n      body: JSON.stringify({ status: 'failed', error_message: 'Instagram-Credentials fehlen' })\n    });\n    continue;\n  }\n\n  try {\n    // Create container\n    const containerBody = { caption: post.caption, access_token: token };\n    if (post.image_url) containerBody.image_url = post.image_url;\n\n    const container = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://graph.facebook.com/v21.0/' + userId + '/media',\n      body: containerBody\n    });\n\n    if (!container.id) throw new Error('Container-Erstellung fehlgeschlagen');\n\n    // Wait for ready\n    let ready = false;\n    for (let i = 0; i < 10; i++) {\n      const status = await helpers.httpRequest({\n        method: 'GET',\n        url: 'https://graph.facebook.com/v21.0/' + container.id + '?fields=status_code&access_token=' + token\n      });\n      if (status.status_code === 'FINISHED') { ready = true; break; }\n      if (status.status_code === 'ERROR') throw new Error('Container Error');\n      await new Promise(r => setTimeout(r, 2000));\n    }\n    if (!ready) throw new Error('Container timeout');\n\n    // Publish\n    const pub = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://graph.facebook.com/v21.0/' + userId + '/media_publish',\n      body: { creation_id: container.id, access_token: token }\n    });\n\n    // Mark as published\n    await helpers.httpRequest({\n      method: 'PATCH',\n      url: baseUrl + '/rest/v1/scheduled_posts?id=eq.' + post.id,\n      headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n      body: JSON.stringify({ status: 'published', published_post_id: pub.id })\n    });\n    published++;\n  } catch(e) {\n    await helpers.httpRequest({\n      method: 'PATCH',\n      url: baseUrl + '/rest/v1/scheduled_posts?id=eq.' + post.id,\n      headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n      body: JSON.stringify({ status: 'failed', error_message: e.message })\n    });\n  }\n}\n\nreturn [{ json: { published, total_pending: posts.length } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Publish Pending Posts", "type": "main", "index": 0 }]]
+    }
+  }
+}
