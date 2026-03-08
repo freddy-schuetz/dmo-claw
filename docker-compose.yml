@@ -4,7 +4,7 @@ services:
   # ── n8n ─────────────────────────────────────────────────────
   n8n:
     image: n8nio/n8n:latest
-    container_name: n8n-claw
+    container_name: dmo-claw
     restart: unless-stopped
     ports:
       - "5678:5678"
@@ -32,12 +32,12 @@ services:
       db:
         condition: service_healthy
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
   # ── PostgreSQL (for Supabase) ───────────────────────────────
   db:
     image: supabase/postgres:15.8.1.085
-    container_name: n8n-claw-db
+    container_name: dmo-claw-db
     restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
@@ -49,7 +49,7 @@ services:
       - db_data:/var/lib/postgresql/data
       - ./supabase/migrations:/docker-entrypoint-initdb.d
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -60,7 +60,7 @@ services:
   # ── Supabase REST API (PostgREST) ───────────────────────────
   rest:
     image: postgrest/postgrest:v14.5
-    container_name: n8n-claw-rest
+    container_name: dmo-claw-rest
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
@@ -74,12 +74,12 @@ services:
       db:
         condition: service_healthy
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
   # ── Kong (API Gateway — routes /rest/v1 to PostgREST) ──────
   kong:
     image: kong:2.8.1
-    container_name: n8n-claw-kong
+    container_name: dmo-claw-kong
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -93,20 +93,20 @@ services:
     depends_on:
       - rest
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
   # ── Supabase Studio (Web UI) ────────────────────────────────
   studio:
     image: supabase/studio:20250113-83c9420
-    container_name: n8n-claw-studio
+    container_name: dmo-claw-studio
     restart: unless-stopped
     ports:
       - "127.0.0.1:3001:3000"
     environment:
       STUDIO_PG_META_URL: http://meta:8080
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      DEFAULT_ORGANIZATION_NAME: n8n-claw
-      DEFAULT_PROJECT_NAME: n8n-claw
+      DEFAULT_ORGANIZATION_NAME: dmo-claw
+      DEFAULT_PROJECT_NAME: dmo-claw
       SUPABASE_URL: http://kong:8000
       SUPABASE_PUBLIC_URL: http://kong:8000
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
@@ -115,12 +115,12 @@ services:
     depends_on:
       - meta
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
   # ── Postgres Meta (for Studio) ───────────────────────────────
   meta:
     image: supabase/postgres-meta:v0.95.2
-    container_name: n8n-claw-meta
+    container_name: dmo-claw-meta
     restart: unless-stopped
     environment:
       PG_META_PORT: 8080
@@ -133,25 +133,25 @@ services:
       db:
         condition: service_healthy
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
 
   # ── SearXNG (Web Search) ────────────────────────────────────
   searxng:
     image: searxng/searxng:latest
-    container_name: n8n-claw-searxng
+    container_name: dmo-claw-searxng
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     networks:
-      - n8n-claw-net
+      - dmo-claw-net
 
 volumes:
   n8n_data:
   db_data:
 
 networks:
-  n8n-claw-net:
+  dmo-claw-net:
     driver: bridge

@@ -1,28 +1,33 @@
-# CLAUDE.md — n8n-claw Development Guide
+# CLAUDE.md — dmo-claw Development Guide
 
 This file is automatically loaded by Claude Code at the start of every session.
 It gives you persistent context about this project so you don't have to repeat yourself.
 
 ---
 
-## What is n8n-claw?
+## What is dmo-claw?
 
-A self-hosted AI agent system built on:
+A DMO (Destination Management Organization) AI agent for tourism associations — built on n8n-claw core.
+
 - **n8n** (workflow automation) — the execution engine for all agent logic
-- **PostgreSQL + PostgREST** — memory, configuration, conversation history
+- **PostgreSQL + PostgREST** — memory, configuration, conversation history, reviews, member businesses
 - **Claude** (Anthropic) — the LLM powering the agent
-- **Telegram** — messaging interface
+- **Telegram + One.Intelligence** — messaging interfaces
+- **Instagram Graph API** — social media posting
+- **Google Places API** — review monitoring
 
-The agent lives in n8n workflows. There is no custom application code — everything runs as n8n nodes connected in workflows.
+First customer: Tourismusverband Zugspitzregion (Sandra/Marketing, Thomas/Mitgliederbetreuung).
+
+Fork of [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) — upstream updates can be merged via `git pull upstream main`.
 
 ---
 
 ## Repository Structure
 
 ```
-n8n-claw/
+dmo-claw/
 ├── workflows/              # n8n workflow JSON files (source of truth)
-│   ├── n8n-claw-agent.json     # Main agent workflow
+│   ├── dmo-claw-agent.json     # Main agent workflow
 │   ├── mcp-builder.json        # Builds new MCP Server workflows
 │   ├── mcp-client.json         # Calls tools on MCP servers (sub-workflow)
 │   ├── mcp-weather-example.json # Example MCP server (Open-Meteo)
@@ -66,7 +71,7 @@ Every time the agent receives a message, it queries `soul` and `agents` and buil
 
 ## Workflow Architecture
 
-### Main Agent (`n8n-claw-agent.json`)
+### Main Agent (`dmo-claw-agent.json`)
 
 ```
 Telegram Trigger
@@ -166,7 +171,7 @@ The setup script runs in this order:
 3. Replace sensitive values with `{{PLACEHOLDER}}` or `REPLACE_*` markers
 4. Save to `workflows/your-workflow.json`
 5. Add to `IMPORT_ORDER` in `setup.sh`
-6. If the agent should use it as a tool, add a `toolWorkflow` node to `n8n-claw-agent.json`
+6. If the agent should use it as a tool, add a `toolWorkflow` node to `dmo-claw-agent.json`
 
 ---
 
@@ -217,7 +222,7 @@ open http://YOUR-IP:3001
 ### Tail n8n logs
 
 ```bash
-docker logs -f n8n-claw
+docker logs -f dmo-claw
 ```
 
 ---

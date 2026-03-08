@@ -1,6 +1,8 @@
-# 🤖 n8n-claw — Self-Hosted AI Agent
+# 🤖 dmo-claw — DMO AI Agent for Tourism Associations
 
-A fully self-hosted AI agent built on n8n + PostgreSQL + Claude. Talks to you via Telegram, builds its own MCP tools, manages reminders and memory — all running on your own infrastructure.
+A self-hosted AI agent for Destination Management Organizations (DMOs), built on n8n + PostgreSQL + Claude. Monitors Google Reviews, posts to Instagram, delivers proactive briefings, and manages member businesses — all via Telegram and One.Intelligence.
+
+Based on [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) core.
 
 ## What it does
 
@@ -21,7 +23,7 @@ Talk to your agent in natural language — it manages tasks, remembers context a
 ```
 Telegram
   ↓
-n8n-claw Agent (Claude Sonnet)
+dmo-claw Agent (Claude Sonnet)
   ├── Task Manager        — create, track, complete tasks
   ├── Memory Save/Search  — long-term memory with vector search
   ├── MCP Client          → calls tools on MCP Servers
@@ -52,7 +54,7 @@ Background Workflows (automated):
 ### Step 1 — Clone & run
 
 ```bash
-git clone https://github.com/freddy-schuetz/n8n-claw.git && cd n8n-claw && ./setup.sh
+git clone https://github.com/freddy-schuetz/dmo-claw.git && cd dmo-claw && ./setup.sh
 ```
 
 The script will:
@@ -126,7 +128,7 @@ These workflows are **activated automatically** by setup — no action needed:
 
 | Workflow | Purpose |
 |---|---|
-| 🤖 n8n-claw Agent | Main agent — receives Telegram messages, calls tools |
+| 🤖 dmo-claw Agent | Main agent — receives Telegram messages, calls tools |
 | 💓 Heartbeat | Background: proactive reminders + morning briefing (every 15 min) |
 | 🧠 Memory Consolidation | Background: summarizes conversations into long-term memory (daily 3am) |
 
@@ -193,7 +195,7 @@ The MCP Builder will:
 
 ## MCP Template Library
 
-Instead of building every MCP server from scratch, you can install pre-built templates from the [template catalog](https://github.com/freddy-schuetz/n8n-claw-templates). Just ask your agent:
+Instead of building every MCP server from scratch, you can install pre-built templates from the [template catalog](https://github.com/freddy-schuetz/dmo-claw-templates). Just ask your agent:
 
 > "What templates are available?"
 > "Install weather-openmeteo"
@@ -212,7 +214,7 @@ The Library Manager fetches templates from GitHub, imports the workflows into n8
 You can also regenerate a credential link later:
 > "Add credential for news-newsapi"
 
-Want to create your own templates? See the [template contribution guide](https://github.com/freddy-schuetz/n8n-claw-templates#creating-a-template).
+Want to create your own templates? See the [template contribution guide](https://github.com/freddy-schuetz/dmo-claw-templates#creating-a-template).
 
 ---
 
@@ -363,7 +365,7 @@ Your reverse proxy should forward traffic to `localhost:5678` (n8n) with WebSock
 **Normal update** — pulls code + Docker images, restarts services. Your personality, credentials, and data are preserved:
 
 ```bash
-cd n8n-claw && ./setup.sh
+cd dmo-claw && ./setup.sh
 ```
 
 **Full reconfigure** — re-runs the setup wizard (personality, language, timezone, proactive/reactive, embedding key). Your existing data and credentials are kept, but you can change all settings:
@@ -401,9 +403,9 @@ Use `--force` when you want to change your agent's name, language, communication
 
 **Logs:**
 ```bash
-docker logs n8n-claw        # n8n
-docker logs n8n-claw-db     # PostgreSQL
-docker logs n8n-claw-rest   # PostgREST
+docker logs dmo-claw        # n8n
+docker logs dmo-claw-db     # PostgreSQL
+docker logs dmo-claw-rest   # PostgREST
 ```
 
 ---

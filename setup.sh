@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================
-# n8n-claw Setup Script
+# dmo-claw Setup Script
 # ============================================================
 
 set -e
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-echo -e "${GREEN}🚀 n8n-claw Setup${NC}"
+echo -e "${GREEN}🚀 dmo-claw Setup${NC}"
 echo "=============================="
 
 # ── 0. Root check ───────────────────────────────────────────
@@ -91,7 +91,7 @@ INSTALL_MODE="fresh"
 FORCE_FLAG=""
 [[ "$1" == "--force" ]] && FORCE_FLAG="--force"
 
-if docker volume inspect n8n-claw_n8n_data > /dev/null 2>&1; then
+if docker volume inspect dmo-claw_n8n_data > /dev/null 2>&1; then
   INSTALL_MODE="update"
   CYAN='\033[0;36m'
   echo -e "\n${CYAN}🔄 Existing installation detected — running in update mode${NC}"
@@ -126,7 +126,7 @@ ask() {
 # ── 3. Generate all crypto keys BEFORE any docker start ─────
 # In update mode: recover encryption key from existing Docker volume
 if [ "$INSTALL_MODE" = "update" ]; then
-  VOLUME_KEY=$(docker run --rm -v n8n-claw_n8n_data:/data alpine \
+  VOLUME_KEY=$(docker run --rm -v dmo-claw_n8n_data:/data alpine \
     cat /data/config /data/.n8n/config 2>/dev/null \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['encryptionKey'])" 2>/dev/null) || true
   if [ -n "$VOLUME_KEY" ]; then
@@ -175,7 +175,7 @@ if [ -z "$N8N_API_KEY" ] || [[ "$N8N_API_KEY" == your_* ]]; then
   done
   echo ""
   if ! LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-    echo -e "${RED}❌ Database failed to start. Check: docker logs n8n-claw-db${NC}"
+    echo -e "${RED}❌ Database failed to start. Check: docker logs dmo-claw-db${NC}"
     exit 1
   fi
   # Supabase postgres image needs supabase_admin role for extension ownership
@@ -290,7 +290,7 @@ for i in {1..60}; do
 done
 echo ""
 if ! LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-  echo -e "${RED}❌ Database failed to start. Check: docker logs n8n-claw-db${NC}"
+  echo -e "${RED}❌ Database failed to start. Check: docker logs dmo-claw-db${NC}"
   exit 1
 fi
 echo -e "  ${GREEN}✅ All services running${NC}"
@@ -308,7 +308,7 @@ if [ -n "$DOMAIN" ] && [[ "$DOMAIN" != "your_"* ]] && [ "$SKIP_REVERSE_PROXY" !=
     --email "admin@${DOMAIN}" --no-eff-email 2>&1 | tail -3
 
   # Write nginx config
-  cat > /etc/nginx/sites-available/n8n-claw << NGINX
+  cat > /etc/nginx/sites-available/dmo-claw << NGINX
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -331,7 +331,7 @@ server {
     }
 }
 NGINX
-  ln -sf /etc/nginx/sites-available/n8n-claw /etc/nginx/sites-enabled/
+  ln -sf /etc/nginx/sites-available/dmo-claw /etc/nginx/sites-enabled/
   rm -f /etc/nginx/sites-enabled/default
   systemctl start nginx
   systemctl enable nginx
@@ -412,7 +412,7 @@ for i in {1..30}; do
 done
 echo ""
 if [ "$STATUS" != "200" ]; then
-  echo -e "${RED}❌ n8n API not responding (status: $STATUS). Check n8n logs: docker logs n8n-claw${NC}"
+  echo -e "${RED}❌ n8n API not responding (status: $STATUS). Check n8n logs: docker logs dmo-claw${NC}"
   exit 1
 fi
 
@@ -595,7 +595,7 @@ for f in workflows/*.json; do
   [ -n "$OPENAI_CRED_ID" ] && \
     sed -i "s|REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID\", \"name\": \"OpenAI API\"|${OPENAI_CRED_ID}\", \"name\": \"OpenAI API\"|g" "$out"
 done
-IMPORT_ORDER="mcp-client reminder-factory mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat n8n-claw-agent"
+IMPORT_ORDER="mcp-client reminder-factory mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -651,7 +651,7 @@ done
 
 # ── 11. Patch workflow IDs in agent ─────────────────────────
 echo -e "\n${GREEN}🔗 Wiring workflow references...${NC}"
-AGENT_WF_ID=${WF_IDS['n8n-claw-agent']}
+AGENT_WF_ID=${WF_IDS['dmo-claw']}
 if [ -n "$AGENT_WF_ID" ]; then
   AGENT_JSON=$(curl -s "${N8N_BASE}/api/v1/workflows/${AGENT_WF_ID}" \
     -H "X-N8N-API-KEY: ${N8N_API_KEY}")
@@ -722,14 +722,14 @@ fi
 fi  # end INSTALL_MODE guard for workflows
 
 # ── 12. Activate agent ───────────────────────────────────────
-AGENT_ID=${WF_IDS['n8n-claw-agent']}
+AGENT_ID=${WF_IDS['dmo-claw']}
 if [ -n "$AGENT_ID" ]; then
   for attempt in 1 2 3; do
     AGENT_ACTIVATE=$(curl -s -X POST "${N8N_BASE}/api/v1/workflows/${AGENT_ID}/activate" \
       -H "X-N8N-API-KEY: ${N8N_API_KEY}")
     AGENT_ACT_ERR=$(echo "$AGENT_ACTIVATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null)
     if [ -z "$AGENT_ACT_ERR" ]; then
-      echo -e "  ${GREEN}✅ n8n-claw Agent activated${NC}"
+      echo -e "  ${GREEN}✅ DMO Claw activated${NC}"
       break
     elif echo "$AGENT_ACT_ERR" | grep -qi "too many\|retry"; then
       sleep 2
@@ -1261,7 +1261,7 @@ fi
 echo "       Settings → Credentials → New → Anthropic API"
 echo "       Name: 'Anthropic API'  |  Key: your key"
 echo "    4. Activate ALL workflows in n8n UI (Workflows → toggle each one on):"
-echo "       → 🤖 n8n-claw Agent      (ID: ${WF_IDS['n8n-claw-agent']})"
+echo "       → 🤖 DMO Claw      (ID: ${WF_IDS['dmo-claw']})"
 echo "       → 🏗️  MCP Builder        (ID: ${WF_IDS['mcp-builder']})"
 echo "       → 🔌 MCP Client          (ID: ${WF_IDS['mcp-client']})"
 echo "       → ⏰ ReminderFactory      (ID: ${WF_IDS['reminder-factory']})"
