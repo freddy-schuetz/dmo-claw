@@ -1,0 +1,40 @@
+{
+  "name": "🔄 Instagram Token Rotation",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 2,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "check-token",
+      "name": "Check & Refresh Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, 0],
+      "parameters": {
+        "jsCode": "const baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': serviceKey,\n  'Authorization': 'Bearer ' + serviceKey,\n  'Content-Type': 'application/json'\n};\n\n// Load current token\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: baseUrl + '/rest/v1/template_credentials?template_id=eq.instagram-post&cred_key=eq.instagram_token&select=cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { status: 'skip', reason: 'No Instagram token configured.' } }];\n}\n\nconst token = creds[0].cred_value;\n\n// Check token validity and expiry\ntry {\n  const debug = await helpers.httpRequest({\n    method: 'GET',\n    url: 'https://graph.facebook.com/debug_token?input_token=' + token + '&access_token=' + token\n  });\n\n  const data = debug.data;\n  if (!data || !data.is_valid) {\n    return [{ json: { status: 'expired', reason: 'Token ist ungültig. Neues Token erforderlich.' } }];\n  }\n\n  const expiresAt = data.expires_at ? new Date(data.expires_at * 1000) : null;\n  const now = new Date();\n  const daysLeft = expiresAt ? Math.floor((expiresAt - now) / (1000 * 60 * 60 * 24)) : null;\n\n  if (daysLeft !== null && daysLeft > 7) {\n    return [{ json: { status: 'ok', days_left: daysLeft, expires_at: expiresAt.toISOString() } }];\n  }\n\n  // Token expires within 7 days — refresh it\n  const refreshed = await helpers.httpRequest({\n    method: 'GET',\n    url: 'https://graph.facebook.com/v21.0/oauth/access_token'\n      + '?grant_type=fb_exchange_token'\n      + '&client_id=' + token // Long-lived tokens can self-refresh\n      + '&fb_exchange_token=' + token\n      + '&access_token=' + token\n  });\n\n  if (refreshed.access_token) {\n    // Save new token\n    await helpers.httpRequest({\n      method: 'PATCH',\n      url: baseUrl + '/rest/v1/template_credentials?template_id=eq.instagram-post&cred_key=eq.instagram_token',\n      headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n      body: JSON.stringify({\n        cred_value: refreshed.access_token,\n        updated_at: new Date().toISOString()\n      })\n    });\n\n    return [{ json: {\n      status: 'refreshed',\n      old_days_left: daysLeft,\n      new_expires_in: refreshed.expires_in ? Math.floor(refreshed.expires_in / 86400) + ' days' : 'unknown'\n    } }];\n  }\n\n  return [{ json: { status: 'refresh_failed', reason: 'Token-Refresh fehlgeschlagen.', days_left: daysLeft } }];\n} catch(e) {\n  return [{ json: { status: 'error', reason: e.message } }];\n}"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Check & Refresh Token", "type": "main", "index": 0 }]]
+    }
+  }
+}
