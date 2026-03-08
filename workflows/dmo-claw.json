@@ -6,144 +6,7 @@
   },
   "name": "🤖 DMO Claw",
   "connections": {
-    "Telegram Trigger": {
-      "main": [
-        [
-          {
-            "node": "Route Media Type",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ],
-      "ai_tool": [
-        []
-      ]
-    },
-    "Route Media Type": {
-      "main": [
-        [
-          {
-            "node": "Normalize Message",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Voice File",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Photo File",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Doc File",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Format Location",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Unsupported Media",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Voice File": {
-      "main": [
-        [
-          {
-            "node": "Transcribe Voice",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Transcribe Voice": {
-      "main": [
-        [
-          {
-            "node": "Normalize Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Photo File": {
-      "main": [
-        [
-          {
-            "node": "Analyze Photo",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Analyze Photo": {
-      "main": [
-        [
-          {
-            "node": "Normalize Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Doc File": {
-      "main": [
-        [
-          {
-            "node": "Extract PDF Text",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract PDF Text": {
-      "main": [
-        [
-          {
-            "node": "Normalize Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Location": {
-      "main": [
-        [
-          {
-            "node": "Normalize Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Unsupported Media": {
+    "Webhook Trigger": {
       "main": [
         [
           {
@@ -197,7 +60,7 @@
       "main": [
         [
           {
-            "node": "Load Conversation History",
+            "node": "Load User Role",
             "type": "main",
             "index": 0
           }
@@ -205,6 +68,17 @@
       ],
       "ai_tool": [
         []
+      ]
+    },
+    "Load User Role": {
+      "main": [
+        [
+          {
+            "node": "Load Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Load Conversation History": {
@@ -332,7 +206,7 @@
             "index": 0
           },
           {
-            "node": "Telegram Reply",
+            "node": "Webhook Reply",
             "type": "main",
             "index": 0
           }
@@ -412,284 +286,38 @@
   "nodes": [
     {
       "parameters": {
-        "updates": [
-          "message"
-        ],
-        "additionalFields": {}
+        "httpMethod": "POST",
+        "path": "dmo-claw",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "id": "telegram-trigger",
-      "name": "Telegram Trigger",
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.1,
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         0,
         -16
       ],
-      "webhookId": "dmo-claw-telegram",
+      "webhookId": "dmo-claw-webhook",
       "credentials": {
-        "telegramApi": {
+        "httpHeaderAuth": {
           "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
+          "name": "DMO Claw Webhook Auth"
         }
       }
     },
     {
       "parameters": {
-        "rules": {
-          "values": [
-            {
-              "outputKey": "text",
-              "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "operator": { "type": "string", "operation": "exists", "singleValue": true },
-                    "leftValue": "={{ $json.message.text }}",
-                    "rightValue": ""
-                  }
-                ]
-              },
-              "renameOutput": true
-            },
-            {
-              "outputKey": "voice",
-              "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "operator": { "type": "object", "operation": "exists", "singleValue": true },
-                    "leftValue": "={{ $json.message.voice }}",
-                    "rightValue": ""
-                  }
-                ]
-              },
-              "renameOutput": true
-            },
-            {
-              "outputKey": "photo",
-              "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "operator": { "type": "array", "operation": "exists", "singleValue": true },
-                    "leftValue": "={{ $json.message.photo }}",
-                    "rightValue": ""
-                  }
-                ]
-              },
-              "renameOutput": true
-            },
-            {
-              "outputKey": "document",
-              "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "operator": { "type": "object", "operation": "exists", "singleValue": true },
-                    "leftValue": "={{ $json.message.document }}",
-                    "rightValue": ""
-                  }
-                ]
-              },
-              "renameOutput": true
-            },
-            {
-              "outputKey": "location",
-              "conditions": {
-                "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "operator": { "type": "object", "operation": "exists", "singleValue": true },
-                    "leftValue": "={{ $json.message.location }}",
-                    "rightValue": ""
-                  }
-                ]
-              },
-              "renameOutput": true
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra",
-          "looseTypeValidation": true
-        }
-      },
-      "id": "route-media-type",
-      "name": "Route Media Type",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.2,
-      "position": [
-        240,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "resource": "file",
-        "fileId": "={{ $('Telegram Trigger').first().json.message.voice.file_id }}"
-      },
-      "id": "get-voice-file",
-      "name": "Get Voice File",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        480,
-        -350
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resource": "audio",
-        "operation": "transcribe",
-        "options": {}
-      },
-      "id": "transcribe-voice",
-      "name": "Transcribe Voice",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 2.1,
-      "position": [
-        700,
-        -350
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID",
-          "name": "OpenAI API"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resource": "file",
-        "fileId": "={{ $('Telegram Trigger').first().json.message.photo.pop().file_id }}"
-      },
-      "id": "get-photo-file",
-      "name": "Get Photo File",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        480,
-        -150
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resource": "image",
-        "operation": "analyze",
-        "modelId": { "__rl": true, "mode": "list", "value": "gpt-4o-mini", "cachedResultName": "GPT-4O-MINI" },
-        "text": "={{ $('Telegram Trigger').first().json.message.caption || 'Describe this image in detail.' }}",
-        "inputType": "base64",
-        "binaryPropertyName": "data",
-        "options": {
-          "maxTokens": 1000,
-          "detail": "auto"
-        }
-      },
-      "id": "analyze-photo",
-      "name": "Analyze Photo",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 2.1,
-      "position": [
-        700,
-        -150
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID",
-          "name": "OpenAI API"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resource": "file",
-        "fileId": "={{ $('Telegram Trigger').first().json.message.document.file_id }}"
-      },
-      "id": "get-doc-file",
-      "name": "Get Doc File",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        480,
-        50
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "pdf",
-        "binaryPropertyName": "data",
-        "options": {
-          "joinPages": true
-        }
-      },
-      "id": "extract-pdf-text",
-      "name": "Extract PDF Text",
-      "type": "n8n-nodes-base.extractFromFile",
-      "typeVersion": 1.1,
-      "position": [
-        700,
-        50
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\nconst loc = msg.location;\nreturn [{\n  json: {\n    userMessage: `I'm sharing my location: ${loc.latitude}, ${loc.longitude}\\n\\nUse the HTTP Tool to resolve the address via https://nominatim.openstreetmap.org/reverse?lat=${loc.latitude}&lon=${loc.longitude}&format=json&accept-language=de`\n  }\n}];"
-      },
-      "id": "format-location",
-      "name": "Format Location",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        480,
-        250
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{\n  json: {\n    userMessage: 'I sent a media type that is not yet supported (sticker, video, etc).'\n  }\n}];"
-      },
-      "id": "unsupported-media",
-      "name": "Unsupported Media",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        480,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\n\n// Determine which media path we came from\nlet userMessage = '';\n\n// Check voice transcription result\ntry {\n  const transcript = $('Transcribe Voice').first()?.json?.text;\n  if (transcript) {\n    userMessage = '[Voice message] ' + transcript;\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check photo (analyzed by OpenAI Vision)\ntry {\n  const analysis = $('Analyze Photo').first();\n  if (analysis) {\n    let description = '';\n    const j = analysis.json;\n    if (Array.isArray(j)) {\n      description = j[0]?.content?.[0]?.text || JSON.stringify(j);\n    } else {\n      description = j.text || j.content || JSON.stringify(j);\n    }\n    const caption = msg.caption || '';\n    userMessage = '[Photo analysis]\\n' + description + (caption ? '\\n\\nUser caption: ' + caption : '');\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check document (PDF text extracted by Extract PDF Text node)\ntry {\n  const extracted = $('Extract PDF Text').first();\n  if (extracted) {\n    const filename = msg.document?.file_name || 'unknown';\n    const pdfText = extracted.json.text || '';\n    userMessage = '[Document: ' + filename + ']\\n\\n' + pdfText + '\\n\\n' + (msg.caption || 'Please analyze this document.');\n    return [{ json: { userMessage } }];\n  }\n} catch(e) {}\n\n// Check location\ntry {\n  const locMsg = $('Format Location').first()?.json?.userMessage;\n  if (locMsg) {\n    return [{ json: { userMessage: locMsg } }];\n  }\n} catch(e) {}\n\n// Check unsupported\ntry {\n  const unsup = $('Unsupported Media').first()?.json?.userMessage;\n  if (unsup) {\n    return [{ json: { userMessage: unsup } }];\n  }\n} catch(e) {}\n\n// Default: text message\nuserMessage = msg.text || '';\nreturn [{ json: { userMessage } }];"
+        "jsCode": "// Extract message from OpenWebUI webhook payload\n// Payload: { messages: [{role, content}], user: {email, name} }\nconst body = $('Webhook Trigger').first().json.body;\nconst messages = body.messages || [];\nconst lastUserMsg = messages.filter(m => m.role === 'user').pop();\nconst userMessage = lastUserMsg?.content || '';\nconst userEmail = body.user?.email || '';\nconst userName = body.user?.name || 'Unknown';\n\nreturn [{\n  json: {\n    userMessage,\n    userEmail,\n    userName\n  }\n}];"
       },
       "id": "normalize-message",
       "name": "Normalize Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        920,
+        240,
         -16
       ]
     },
@@ -746,7 +374,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'telegram:{{ $('Telegram Trigger').item.json.message.from.id }}' LIMIT 1",
+        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' LIMIT 1",
         "options": {
           "queryBatching": "independently"
         }
@@ -771,7 +399,32 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT role, content FROM conversations WHERE session_id = 'telegram:{{ $('Telegram Trigger').item.json.message.chat.id }}' ORDER BY created_at DESC LIMIT 20",
+        "query": "SELECT role, name FROM dmo_users WHERE oi_email = '{{ $('Normalize Message').first().json.userEmail }}' AND active = true LIMIT 1",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-user-role",
+      "name": "Load User Role",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        -16
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT role, content FROM conversations WHERE session_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' ORDER BY created_at DESC LIMIT 20",
         "options": {
           "queryBatching": "independently"
         }
@@ -795,7 +448,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build system prompt from loaded context\nconst soul = $('Load Soul').all().map(i => i.json);\n// Deduplicate: sequential node chaining causes cartesian product (6 soul × 6 agents = 36 items)\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\n// Deduplicate conversation history (36x duplicated due to upstream cartesian product)\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Normalize Message').first().json.userMessage || '';\nconst chatId = $('Telegram Trigger').first().json.message.chat.id;\nconst userId = $('Telegram Trigger').first().json.message.from.id;\n\n// Build soul text\nconst soulText = soul.map(s => `## ${s.key}\\n${s.content}`).join('\\n\\n');\nconst agentText = agents.map(a => `## ${a.key}\\n${a.content}`).join('\\n\\n');\nconst userText = user.display_name \n  ? `Name: ${user.display_name} (${user.name})\\nTimezone: ${user.timezone}\\nKontext: ${user.context}\\nPrefs: ${JSON.stringify(user.preferences)}\\nSetup done: ${user.setup_done !== false ? 'true' : 'false'}`\n  : 'Unbekannter User';\n\n// Build conversation history\nconst historyText = history.reverse().map(h => `${h.role}: ${h.content}`).join('\\n');\n\nconst toolHint = `\\n\\n# WICHTIGE TOOLS\\n- WorkflowBuilder: Nutze dieses Tool um n8n Workflows zu erstellen. Wenn der User eine Integration, API-Anbindung oder Automatisierung braucht, rufe WorkflowBuilder auf statt nachzufragen. Gib alle Details (URLs, Credentials, Anforderungen) direkt weiter.\\n- Reminder: Erstellt zeitgesteuerte Erinnerungen.\\n- Memory Search/Save: Langzeitgedächtnis.\\n- HTTP Tool: Einfache GET requests (keine Auth).\\n- Web Search: Durchsucht das Internet. Nutze dieses Tool wenn der User aktuelle Infos braucht, Fragen hat die du nicht sicher beantworten kannst, oder nach etwas Konkretem sucht.\\n- Self Modify: n8n Workflows auflisten/anzeigen.`;\n\n// Current date/time in user's timezone\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = `# CURRENT TIME\\n${now}\\n\\n# SOUL\\n${soulText}\\n\\n# AGENT CONFIG\\n${agentText}\\n\\n# USER PROFILE\\n${userText}\\n\\n# RECENT CONVERSATION\\n${historyText}`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userMessage,\n    chatId: String(chatId),\n    userId: String(userId),\n    sessionId: `telegram:${chatId}`\n  }\n}];"
+        "jsCode": "// Build system prompt from loaded context\nconst soul = $('Load Soul').all().map(i => i.json);\n// Deduplicate: sequential node chaining causes cartesian product (6 soul × 6 agents = 36 items)\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\n// Deduplicate conversation history (36x duplicated due to upstream cartesian product)\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Normalize Message').first().json.userMessage || '';\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userName = $('Normalize Message').first().json.userName || 'Unknown';\n\n// Build soul text\nconst soulText = soul.map(s => `## ${s.key}\\n${s.content}`).join('\\n\\n');\nconst agentText = agents.map(a => `## ${a.key}\\n${a.content}`).join('\\n\\n');\nconst userText = user.display_name \n  ? `Name: ${user.display_name} (${user.name})\\nTimezone: ${user.timezone}\\nKontext: ${user.context}\\nPrefs: ${JSON.stringify(user.preferences)}\\nSetup done: ${user.setup_done !== false ? 'true' : 'false'}`\n  : 'Unbekannter User';\n\n// Role-based tool visibility\nconst roleContextMap = {\n  marketing: `Rolle: Marketing (${roleName})\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.`,\n  member_relations: `Rolle: Mitgliederbetreuung (${roleName})\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.`,\n  admin: `Rolle: Admin (${roleName})\\nVollzugriff auf alle Tools und Funktionen.`,\n  readonly: `Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausführen (kein Posting, keine Änderungen).`\n};\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\n// Build conversation history\nconst historyText = history.reverse().map(h => `${h.role}: ${h.content}`).join('\\n');\n\nconst toolHint = `\\n\\n# WICHTIGE TOOLS\\n- WorkflowBuilder: Nutze dieses Tool um n8n Workflows zu erstellen. Wenn der User eine Integration, API-Anbindung oder Automatisierung braucht, rufe WorkflowBuilder auf statt nachzufragen. Gib alle Details (URLs, Credentials, Anforderungen) direkt weiter.\\n- Reminder: Erstellt zeitgesteuerte Erinnerungen.\\n- Memory Search/Save: Langzeitgedächtnis.\\n- HTTP Tool: Einfache GET requests (keine Auth).\\n- Web Search: Durchsucht das Internet. Nutze dieses Tool wenn der User aktuelle Infos braucht, Fragen hat die du nicht sicher beantworten kannst, oder nach etwas Konkretem sucht.\\n- Self Modify: n8n Workflows auflisten/anzeigen.`;\n\n// Current date/time in user's timezone\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = `# CURRENT TIME\\n${now}\\n\\n# SOUL\\n${soulText}\\n\\n# AGENT CONFIG\\n${agentText}\\n\\n# USER ROLE\\n${roleContext}\\n\\n# USER PROFILE\\n${userText}\\n\\n# RECENT CONVERSATION\\n${historyText}`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userMessage,\n    userEmail,\n    userName,\n    userId: userEmail,\n    sessionId: `oi:${userEmail}`\n  }\n}];"
       },
       "id": "build-prompt",
       "name": "Build System Prompt",
@@ -868,7 +521,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'user', '{{ $json.userMessage.replace(/'/g, \"''\") }}'); INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'assistant', '{{ $json.assistantMessage.replace(/'/g, \"''\") }}'); {{ $json.markSetupDone ? \"UPDATE user_profiles SET setup_done = true WHERE user_id = 'telegram:\" + $json.userId + \"';\" : '' }}",
+        "query": "INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'user', '{{ $json.userMessage.replace(/'/g, \"''\") }}'); INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'assistant', '{{ $json.assistantMessage.replace(/'/g, \"''\") }}'); {{ $json.markSetupDone ? \"UPDATE user_profiles SET setup_done = true WHERE user_id = 'oi:\" + $json.userId + \"';\" : '' }}",
         "options": {
           "queryBatching": "independently"
         }
@@ -913,28 +566,18 @@
     },
     {
       "parameters": {
-        "chatId": "={{ $('Build System Prompt').first().json.chatId }}",
-        "text": "={{ $('AI Agent').first().json.output }}",
-        "additionalFields": {
-          "appendAttribution": false,
-          "parse_mode": "Markdown"
-        }
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ output: $('AI Agent').first().json.output }) }}",
+        "options": {}
       },
-      "id": "telegram-reply",
-      "name": "Telegram Reply",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "id": "webhook-reply",
+      "name": "Webhook Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
       "position": [
         3904,
         -16
-      ],
-      "webhookId": "9fd4b04d-2f65-4443-b507-51506f758a95",
-      "credentials": {
-        "telegramApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -1008,7 +651,7 @@
     },
     {
       "parameters": {
-        "description": "Set a timed reminder that sends a Telegram message at a specific time. Use when user says 'remind me at...', 'remind me in X minutes/hours'. Input: time as ISO 8601 (e.g. 2026-03-01T10:00:00+01:00) and message text.",
+        "description": "Set a timed reminder. Use when user says 'remind me at...', 'remind me in X minutes/hours'. Input: time as ISO 8601 (e.g. 2026-03-01T10:00:00+01:00) and message text.",
         "workflowId": {
           "__rl": true,
           "value": "REPLACE_REMINDER_FACTORY_ID",
@@ -1103,7 +746,7 @@
     {
       "parameters": {
         "description": "Manage tasks. Input: JSON with action and parameters.\n\nActions:\n- list: List tasks. Optional: status (pending/in_progress/done/cancelled), priority, due_before (ISO date)\n- create: Create task. Required: title. Optional: description, priority (low/medium/high/urgent), due_date (ISO 8601), parent_id (for subtasks), tags (array)\n- update: Update task. Required: id. Optional: title, description, status, priority, due_date, tags\n- delete: Delete task. Required: id\n- summary: Overview of all pending/in_progress tasks grouped by priority\n- set_preference: Save user preference. Required: key, value. Example: {\"action\":\"set_preference\",\"key\":\"morning_briefing\",\"value\":{\"enabled\":true,\"time\":\"08:00\"}}\n\nExamples:\n{\"action\":\"create\",\"title\":\"Call dentist\",\"due_date\":\"2026-03-10T10:00:00+01:00\",\"priority\":\"high\"}\n{\"action\":\"list\",\"status\":\"pending\"}\n{\"action\":\"update\",\"id\":5,\"status\":\"done\"}\n{\"action\":\"summary\"}",
-        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst CHAT_ID = '{{TELEGRAM_CHAT_ID}}';\n\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userId = `telegram:${CHAT_ID}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userId = `oi:${userEmail}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
       },
       "id": "tool-task-manager",
       "name": "Task Manager",

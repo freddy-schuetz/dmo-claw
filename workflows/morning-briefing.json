@@ -1,0 +1,40 @@
+{
+  "name": "☀️ Morning Briefing",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gather-data",
+      "name": "Gather Briefing Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, 0],
+      "parameters": {
+        "jsCode": "const baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': serviceKey,\n  'Authorization': 'Bearer ' + serviceKey,\n  'Content-Type': 'application/json'\n};\n\nconst now = new Date();\nconst todayStr = now.toISOString().split('T')[0];\nconst yesterdayStr = new Date(now - 86400000).toISOString().split('T')[0];\n\n// 1. New reviews since yesterday\nlet newReviews = [];\ntry {\n  newReviews = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/reviews?fetched_at=gte.' + yesterdayStr + '&select=*,member_businesses(name)&order=rating.asc',\n    headers: pgHeaders\n  });\n} catch(e) { newReviews = []; }\n\n// 2. Scheduled posts for today\nlet todayPosts = [];\ntry {\n  todayPosts = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/scheduled_posts?scheduled_at=gte.' + todayStr + 'T00:00:00&scheduled_at=lte.' + todayStr + 'T23:59:59&select=*&order=scheduled_at.asc',\n    headers: pgHeaders\n  });\n} catch(e) { todayPosts = []; }\n\n// 3. Pending tasks\nlet pendingTasks = [];\ntry {\n  pendingTasks = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/tasks?status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=id,title,priority,due_date,status',\n    headers: pgHeaders\n  });\n} catch(e) { pendingTasks = []; }\n\n// 4. Weather (call Open-Meteo for the region)\nlet weather = null;\ntry {\n  const w = await helpers.httpRequest({\n    method: 'GET',\n    url: 'https://api.open-meteo.com/v1/forecast?latitude=47.4&longitude=11.1&current=temperature_2m,weather_code,snow_depth&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,snowfall_sum&timezone=Europe/Berlin&forecast_days=1'\n  });\n  const weatherCodes = {0:'Klar',1:'Überwiegend klar',2:'Teilweise bewölkt',3:'Bewölkt',45:'Nebel',61:'Leichter Regen',63:'Regen',71:'Leichter Schneefall',73:'Schneefall',75:'Starker Schneefall',95:'Gewitter'};\n  weather = {\n    temp: w.current.temperature_2m,\n    condition: weatherCodes[w.current.weather_code] || 'Code ' + w.current.weather_code,\n    snow_depth: w.current.snow_depth,\n    max: w.daily.temperature_2m_max[0],\n    min: w.daily.temperature_2m_min[0],\n    precip_prob: w.daily.precipitation_probability_max[0],\n    snowfall: w.daily.snowfall_sum[0]\n  };\n} catch(e) { weather = null; }\n\n// Build briefing text\nlet briefing = '# ☀️ Morgen-Briefing — ' + new Date().toLocaleDateString('de-DE', {weekday:'long', day:'numeric', month:'long', year:'numeric', timeZone:'Europe/Berlin'}) + '\\n\\n';\n\n// Weather\nif (weather) {\n  briefing += '## 🌡️ Wetter\\n';\n  briefing += weather.temp + '°C, ' + weather.condition;\n  if (weather.snow_depth > 0) briefing += ', Schneehöhe: ' + weather.snow_depth + ' cm';\n  briefing += '\\nMin/Max: ' + weather.min + '/' + weather.max + '°C';\n  if (weather.precip_prob > 0) briefing += ', Niederschlag: ' + weather.precip_prob + '%';\n  if (weather.snowfall > 0) briefing += ', Neuschnee: ' + weather.snowfall + ' cm';\n  briefing += '\\n\\n';\n}\n\n// Reviews\nif (newReviews.length > 0) {\n  briefing += '## ⭐ Neue Bewertungen (' + newReviews.length + ')\\n';\n  const avgRating = (newReviews.reduce((s,r) => s + r.rating, 0) / newReviews.length).toFixed(1);\n  const lowReviews = newReviews.filter(r => r.rating <= 3);\n  briefing += 'Durchschnitt: ' + avgRating + '★';\n  if (lowReviews.length > 0) briefing += ' ⚠️ ' + lowReviews.length + ' kritische Bewertung(en)';\n  briefing += '\\n';\n  newReviews.slice(0, 5).forEach(r => {\n    const biz = r.member_businesses?.name || 'Unbekannt';\n    briefing += '- ' + '★'.repeat(r.rating) + ' ' + biz + ': ' + (r.text || '').substring(0, 80) + '\\n';\n  });\n  briefing += '\\n';\n} else {\n  briefing += '## ⭐ Bewertungen\\nKeine neuen Bewertungen seit gestern.\\n\\n';\n}\n\n// Posts\nif (todayPosts.length > 0) {\n  briefing += '## 📱 Geplante Posts heute (' + todayPosts.length + ')\\n';\n  todayPosts.forEach(p => {\n    const time = new Date(p.scheduled_at).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Berlin'});\n    briefing += '- ' + time + ' ' + p.platform + ': ' + (p.caption || '').substring(0, 60) + ' [' + p.status + ']\\n';\n  });\n  briefing += '\\n';\n} else {\n  briefing += '## 📱 Posts\\nKeine Posts für heute geplant.\\n\\n';\n}\n\n// Tasks\nif (pendingTasks.length > 0) {\n  const urgent = pendingTasks.filter(t => t.priority === 'urgent' || t.priority === 'high');\n  briefing += '## ✅ Aufgaben (' + pendingTasks.length + ' offen';\n  if (urgent.length > 0) briefing += ', ' + urgent.length + ' dringend';\n  briefing += ')\\n';\n  pendingTasks.slice(0, 5).forEach(t => {\n    const due = t.due_date ? ' (fällig: ' + new Date(t.due_date).toLocaleDateString('de-DE', {timeZone:'Europe/Berlin'}) + ')' : '';\n    briefing += '- [' + t.priority + '] ' + t.title + due + '\\n';\n  });\n  briefing += '\\n';\n}\n\n// Save briefing to DB\ntry {\n  await helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/rest/v1/memory_daily',\n    headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n    body: JSON.stringify({\n      date: todayStr,\n      content: briefing,\n      role: 'briefing',\n      user_id: 'system'\n    })\n  });\n} catch(e) {}\n\nreturn [{ json: { briefing, date: todayStr } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Gather Briefing Data", "type": "main", "index": 0 }]]
+    }
+  }
+}

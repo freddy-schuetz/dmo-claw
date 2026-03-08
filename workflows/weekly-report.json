@@ -1,0 +1,40 @@
+{
+  "name": "📊 Weekly Report",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * 5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gather-weekly",
+      "name": "Gather Weekly Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [256, 0],
+      "parameters": {
+        "jsCode": "const baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': serviceKey,\n  'Authorization': 'Bearer ' + serviceKey,\n  'Content-Type': 'application/json'\n};\n\nconst now = new Date();\nconst weekAgo = new Date(now - 7 * 86400000).toISOString().split('T')[0];\nconst todayStr = now.toISOString().split('T')[0];\n\n// 1. Reviews this week\nlet weekReviews = [];\ntry {\n  weekReviews = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/reviews?fetched_at=gte.' + weekAgo + '&select=*,member_businesses(name)&order=rating.asc',\n    headers: pgHeaders\n  });\n} catch(e) { weekReviews = []; }\n\n// 2. Posts this week\nlet weekPosts = [];\ntry {\n  weekPosts = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/scheduled_posts?created_at=gte.' + weekAgo + '&select=*&order=created_at.desc',\n    headers: pgHeaders\n  });\n} catch(e) { weekPosts = []; }\n\n// 3. Tasks completed this week\nlet completedTasks = [];\ntry {\n  completedTasks = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/tasks?status=eq.done&completed_at=gte.' + weekAgo + '&select=title,completed_at,priority',\n    headers: pgHeaders\n  });\n} catch(e) { completedTasks = []; }\n\n// 4. Still pending tasks\nlet pendingTasks = [];\ntry {\n  pendingTasks = await helpers.httpRequest({\n    method: 'GET',\n    url: baseUrl + '/rest/v1/tasks?status=in.(pending,in_progress)&parent_id=is.null&select=title,priority,due_date,status',\n    headers: pgHeaders\n  });\n} catch(e) { pendingTasks = []; }\n\n// Build report\nconst weekStart = new Date(now - 6 * 86400000).toLocaleDateString('de-DE', {day:'numeric', month:'long', timeZone:'Europe/Berlin'});\nconst weekEnd = now.toLocaleDateString('de-DE', {day:'numeric', month:'long', year:'numeric', timeZone:'Europe/Berlin'});\n\nlet report = '# 📊 Wochenbericht — ' + weekStart + ' bis ' + weekEnd + '\\n\\n';\n\n// Reviews summary\nreport += '## ⭐ Bewertungen\\n';\nif (weekReviews.length > 0) {\n  const avgRating = (weekReviews.reduce((s,r) => s + r.rating, 0) / weekReviews.length).toFixed(1);\n  const ratingDist = [1,2,3,4,5].map(r => weekReviews.filter(rv => rv.rating === r).length);\n  report += weekReviews.length + ' neue Bewertungen, Durchschnitt: ' + avgRating + '★\\n';\n  report += 'Verteilung: ★' + ratingDist.join(' | ★') + '\\n';\n  const unanswered = weekReviews.filter(r => !r.answered);\n  if (unanswered.length > 0) report += '⚠️ ' + unanswered.length + ' unbeantwortete Bewertung(en)\\n';\n  // Top businesses\n  const bizCounts = {};\n  weekReviews.forEach(r => { const n = r.member_businesses?.name || 'Unbekannt'; bizCounts[n] = (bizCounts[n] || 0) + 1; });\n  report += 'Nach Betrieb: ' + Object.entries(bizCounts).map(([n,c]) => n + ' (' + c + ')').join(', ') + '\\n';\n} else {\n  report += 'Keine neuen Bewertungen diese Woche.\\n';\n}\nreport += '\\n';\n\n// Posts summary\nreport += '## 📱 Social Media\\n';\nif (weekPosts.length > 0) {\n  const published = weekPosts.filter(p => p.status === 'published');\n  const failed = weekPosts.filter(p => p.status === 'failed');\n  const pending = weekPosts.filter(p => p.status === 'pending');\n  report += published.length + ' veröffentlicht';\n  if (failed.length > 0) report += ', ' + failed.length + ' fehlgeschlagen';\n  if (pending.length > 0) report += ', ' + pending.length + ' ausstehend';\n  report += '\\n';\n} else {\n  report += 'Keine Posts diese Woche.\\n';\n}\nreport += '\\n';\n\n// Tasks summary\nreport += '## ✅ Aufgaben\\n';\nreport += completedTasks.length + ' erledigt, ' + pendingTasks.length + ' noch offen\\n';\nif (pendingTasks.length > 0) {\n  const urgent = pendingTasks.filter(t => t.priority === 'urgent' || t.priority === 'high');\n  if (urgent.length > 0) {\n    report += '⚠️ ' + urgent.length + ' dringende Aufgaben:\\n';\n    urgent.forEach(t => {\n      const due = t.due_date ? ' (fällig: ' + new Date(t.due_date).toLocaleDateString('de-DE', {timeZone:'Europe/Berlin'}) + ')' : '';\n      report += '- ' + t.title + due + '\\n';\n    });\n  }\n}\nreport += '\\n';\n\n// Save report to DB\ntry {\n  await helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/rest/v1/memory_daily',\n    headers: { ...pgHeaders, 'Prefer': 'return=minimal' },\n    body: JSON.stringify({\n      date: todayStr,\n      content: report,\n      role: 'weekly_report',\n      user_id: 'system'\n    })\n  });\n} catch(e) {}\n\nreturn [{ json: { report, date: todayStr } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Gather Weekly Data", "type": "main", "index": 0 }]]
+    }
+  }
+}

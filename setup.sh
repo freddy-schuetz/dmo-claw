@@ -595,7 +595,7 @@ for f in workflows/*.json; do
   [ -n "$OPENAI_CRED_ID" ] && \
     sed -i "s|REPLACE_WITH_YOUR_OPENAI_CREDENTIAL_ID\", \"name\": \"OpenAI API\"|${OPENAI_CRED_ID}\", \"name\": \"OpenAI API\"|g" "$out"
 done
-IMPORT_ORDER="mcp-client reminder-factory mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat dmo-claw"
+IMPORT_ORDER="mcp-client reminder-factory mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -896,6 +896,50 @@ if [ -n "$CUSTOM_PERSONA" ]; then
 fi
 
 echo ""
+echo -e "${GREEN}🏔️ DMO Configuration${NC}"
+echo "────────────────────────────"
+echo "Configure your tourism association details."
+echo ""
+DMO_ORG=$(cli_ask "Organization name" "Tourismusverband Zugspitzregion")
+DMO_REGION=$(cli_ask "Region" "Zugspitzregion / Garmisch-Partenkirchen")
+DMO_HASHTAGS=$(cli_ask "Brand hashtags (comma-separated)" "#zugspitzregion,#garmisch,#bayern")
+DMO_INSTAGRAM=$(cli_ask "Instagram account (optional)" "")
+echo ""
+
+echo -e "${GREEN}👥 DMO User Setup${NC}"
+echo "────────────────────────────"
+echo "Add DMO team members (they need a Telegram account)."
+echo "Leave empty to skip."
+echo ""
+
+DMO_USERS_SQL=""
+for i in 1 2 3 4 5; do
+  read -rp "  User $i — Name (empty to stop): " DMO_U_NAME
+  [ -z "$DMO_U_NAME" ] && break
+  read -rp "  User $i — Email (OpenWebUI login): " DMO_U_EMAIL
+  [ -z "$DMO_U_EMAIL" ] && { echo "  Skipping (no email)"; continue; }
+  echo "  Role:"
+  echo "    1) marketing"
+  echo "    2) member_relations"
+  echo "    3) admin"
+  echo "    4) readonly"
+  read -rp "  Choose [3]: " DMO_U_ROLE_CHOICE
+  case "${DMO_U_ROLE_CHOICE:-3}" in
+    1) DMO_U_ROLE="marketing" ;;
+    2) DMO_U_ROLE="member_relations" ;;
+    4) DMO_U_ROLE="readonly" ;;
+    *) DMO_U_ROLE="admin" ;;
+  esac
+  DMO_USERS_SQL="${DMO_USERS_SQL}
+INSERT INTO public.dmo_users (oi_email, name, role, active)
+VALUES ('$(echo "$DMO_U_EMAIL" | sed "s/'/''/g")', '$(echo "$DMO_U_NAME" | sed "s/'/''/g")', '${DMO_U_ROLE}', true)
+ON CONFLICT (oi_email) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role;
+"
+  echo -e "  ${GREEN}✅ ${DMO_U_NAME} (${DMO_U_ROLE})${NC}"
+  echo ""
+done
+
+echo ""
 echo -e "${GREEN}🧠 RAG / Vector Memory (optional)${NC}"
 echo "  For semantic memory search, provide an embedding API key."
 echo "  Supported providers: openai (default), voyage, ollama"
@@ -984,16 +1028,27 @@ ctx     = esc('${CTX}')
 chat_id = '${TELEGRAM_CHAT_ID}'
 mcp_url = '${N8N_URL_FOR_MCP}'
 tz      = esc('${TIMEZONE:-UTC}')
+dmo_org       = esc('${DMO_ORG}')
+dmo_region    = esc('${DMO_REGION}')
+dmo_hashtags  = esc('${DMO_HASHTAGS}')
+dmo_instagram = esc('${DMO_INSTAGRAM}')
 uname   = user.lower().replace(' ', '_')
 
 sql = f"""
 INSERT INTO public.soul (key, content) VALUES
   ('name', '{bot}'),
-  ('persona', 'You are {bot}, a helpful AI assistant for {user}. Preferred language: {lang}. {style}'),
+  ('persona', 'You are {bot}, the AI assistant for {dmo_org}. You help DMO team members with tourism marketing, member management, reviews, and social media. Preferred language: {lang}. {style}'),
   ('vibe', '{style}'),
   ('proactive', '{proact}'),
   ('boundaries', 'Keep private data private. Ask before external actions.'),
-  ('communication', 'You communicate via Telegram. Reply directly.')
+  ('communication', 'You communicate via Telegram. Reply directly.'),
+  ('organization_name', '{dmo_org}'),
+  ('region', '{dmo_region}'),
+  ('target_audience', 'Touristen, Wanderer, Skifahrer, Familien in der Region'),
+  ('tone_of_voice', 'Professionell aber nahbar. Tourismusbranche. Deutsch als Hauptsprache.'),
+  ('brand_hashtags', '{dmo_hashtags}'),
+  ('instagram_account', '{dmo_instagram}'),
+  ('language', 'Deutsch (primär), Englisch (sekundär)')
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
 INSERT INTO public.user_profiles (user_id, name, display_name, timezone, context, preferences, setup_done, setup_step)
@@ -1133,15 +1188,15 @@ PREFERENCES (set_preference action):
 - Greet the user by their display_name
 - Introduce yourself briefly (your name from the soul config, what you are)
 - List your capabilities with one concrete example each:
-  * Answer questions and web search ("Who won the last World Cup?")
-  * Manage tasks ("Create a task: tax return by Friday")
-  * Set reminders ("Remind me in 2 hours to check the oven")
-  * Understand voice messages (just send one)
-  * Analyze photos ("What do you see in this picture?")
-  * Read and summarize PDFs (just send a document)
-  * Recognize locations (share your location)
-  * Remember things ("Remember: I take my coffee black")
-  * Build new API integrations ("Build me a GitHub API connection")
+  * Alpenwetter abfragen ("Wie ist der Schnee auf der Zugspitze?")
+  * Google-Bewertungen prüfen ("Zeig mir neue Bewertungen")
+  * Instagram-Posts erstellen ("Poste das Bild auf Instagram")
+  * Posts planen ("Plane den Post für morgen 17 Uhr")
+  * Aufgaben verwalten ("Erstelle eine Aufgabe: Newsletter bis Freitag")
+  * Erinnerungen setzen ("Erinnere mich in 2 Stunden an die Presseaussendung")
+  * Fotos und PDFs analysieren (einfach senden)
+  * Sprachnachrichten verstehen (einfach aufnehmen)
+  * Websuche ("Was sind aktuelle Trends im Alpentourismus?")
 - Respond in the user''s language (check their language preference)
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
 - setup_done will be set to true automatically after your first response — you do not need to do this yourself.'),
@@ -1166,6 +1221,13 @@ ON CONFLICT (user_id) DO UPDATE SET
   context = EXCLUDED.context,
   updated_at = now();
 " > /dev/null 2>&1
+
+# Seed DMO users
+if [ -n "$DMO_USERS_SQL" ]; then
+  LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "$DMO_USERS_SQL" > /dev/null 2>&1
+  DMO_USER_COUNT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c "SELECT COUNT(*) FROM dmo_users WHERE active = true" 2>/dev/null | tr -d ' ')
+  echo -e "  ${GREEN}✅ ${DMO_USER_COUNT:-0} DMO user(s) configured${NC}"
+fi
 
 # Verify soul was written
 SOUL_COUNT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c "SELECT COUNT(*) FROM soul" 2>/dev/null | tr -d ' ')

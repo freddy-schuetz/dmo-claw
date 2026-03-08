@@ -1,470 +1,139 @@
-# 🤖 dmo-claw — DMO AI Agent for Tourism Associations
+# dmo-claw — AI Agent for Tourism DMOs
 
-A self-hosted AI agent for Destination Management Organizations (DMOs), built on n8n + PostgreSQL + Claude. Monitors Google Reviews, posts to Instagram, delivers proactive briefings, and manages member businesses — all via Telegram and One.Intelligence.
+A self-hosted AI agent for Destination Management Organizations (DMOs), built on [n8n-claw](https://github.com/freddy-schuetz/n8n-claw). Monitors Google Reviews, posts to Instagram, delivers alpine weather reports, manages tasks, and generates proactive briefings — all via OpenWebUI or any webhook-compatible chat interface.
 
-Based on [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) core.
+First use case: **Tourismusverband Zugspitzregion** with role-based access for Marketing and Member Relations teams.
 
-## What it does
+## Features
 
-Talk to your agent in natural language — it manages tasks, remembers context across conversations, builds API integrations, and proactively keeps you on track.
-
-- **Telegram chat** — talk to your AI agent directly via Telegram
-- **Long-term memory** — remembers conversations and important context with optional semantic search (RAG)
-- **Task management** — create, track, and complete tasks with priorities and due dates
-- **Proactive heartbeat** — automatically reminds you of overdue/urgent tasks
-- **Morning briefing** — daily summary of your tasks at a time you choose
-- **MCP Server Builder** — builds new API integrations on demand (just ask: *"build me an MCP server for the GitHub API"*)
-- **Smart reminders** — timed Telegram reminders ("remind me in 2 hours to...")
-- **Web search** — searches the web via built-in SearXNG instance (no API key needed)
-- **Extensible** — add new tools and capabilities through natural language
+- **Google Reviews** — query locally cached reviews, rating summaries, unanswered review alerts
+- **Instagram Posting** — create posts via Graph API, schedule posts for later, automatic token rotation
+- **Alpine Weather** — snow depth, freezing level, 7-day forecast via Open-Meteo (free, no API key)
+- **Role-based access** — marketing sees posting tools, member relations sees review tools, admins see everything
+- **Proactive briefings** — daily morning briefing (weather, reviews, posts, tasks) and weekly reports
+- **Task management** — priorities, due dates, subtasks
+- **Long-term memory** — remembers conversations with optional semantic search (RAG)
+- **MCP Template Library** — install pre-built tools from [dmo-claw-templates](https://github.com/freddy-schuetz/dmo-claw-templates)
+- **MCP Builder** — build new API integrations on demand via natural language
+- **Web search** — self-hosted SearXNG instance (no API key needed)
 
 ## Architecture
 
 ```
-Telegram
-  ↓
-dmo-claw Agent (Claude Sonnet)
-  ├── Task Manager        — create, track, complete tasks
-  ├── Memory Save/Search  — long-term memory with vector search
-  ├── MCP Client          → calls tools on MCP Servers
-  ├── MCP Builder          → creates new MCP Servers automatically
-  ├── Library Manager     → install/remove MCP templates from catalog
-  ├── Reminder Factory    — timed Telegram reminders
-  ├── HTTP Tool           — simple web requests
-  ├── Web Search          — search the web (SearXNG)
-  └── Self Modify         — inspect/list n8n workflows
+OpenWebUI / Webhook (POST /webhook/dmo-claw)
+  |
+DMO Claw Agent (Claude Sonnet)
+  |-- Task Manager        — create, track, complete tasks
+  |-- Memory Save/Search  — long-term memory with vector search
+  |-- MCP Client          — calls tools on MCP Servers (weather, reviews, Instagram)
+  |-- MCP Builder         — creates new MCP Servers automatically
+  |-- Library Manager     — install/remove templates from catalog
+  |-- HTTP Tool           — simple web requests
+  |-- Web Search          — SearXNG meta search
+  +-- Self Modify         — inspect/list n8n workflows
 
-Background Workflows (automated):
-  💓 Heartbeat              — every 15 min: proactive reminders + morning briefing
-  🧠 Memory Consolidation   — daily at 3am: summarizes conversations → long-term memory
+Background Workflows:
+  review-batch             — daily: fetch Google Reviews → local DB → alert on <= 3 stars
+  instagram-token-rotation — daily: check & refresh Instagram token
+  post-scheduler           — every minute: publish scheduled posts
+  morning-briefing         — daily 07:30: weather + reviews + posts + tasks summary
+  weekly-report            — Friday 16:00: weekly aggregated report
+  memory-consolidation     — daily 03:00: summarize conversations → long-term memory
+  heartbeat                — every 15 min: proactive task reminders
 ```
-
----
-
-## Installation
-
-### What you need
-
-- A Linux VPS (Ubuntu 22.04/24.04 recommended, also tested with Debian 13, 2GB RAM and 12GB Disk minimum)
-- A **Telegram Bot** — create one via [@BotFather](https://t.me/BotFather)
-- Your **Telegram Chat ID** — get it from [@userinfobot](https://t.me/userinfobot)
-- An **Anthropic API Key** — from [console.anthropic.com](https://console.anthropic.com)
-- A **domain name** (optional but recommended, required for Telegram HTTPS webhooks)
-
-### Step 1 — Clone & run
-
-```bash
-git clone https://github.com/freddy-schuetz/dmo-claw.git && cd dmo-claw && ./setup.sh
-```
-
-The script will:
-
-1. **Update the system** (`apt update && apt upgrade`)
-2. **Install Docker** automatically if not present
-3. **Start n8n** so you can generate an API key
-4. **Ask you for configuration** interactively:
-   - n8n API Key *(generated in n8n UI → Settings → API)*
-   - Telegram Bot Token
-   - Telegram Chat ID
-   - Anthropic API Key
-   - Domain name *(optional — enables HTTPS via Let's Encrypt + nginx, or skip nginx if you already have a reverse proxy)*
-5. **Configure your agent's personality**:
-   - Agent name
-   - Your name
-   - Preferred language
-   - Timezone *(auto-detected from system)*
-   - Communication style (casual / professional / friendly)
-   - Proactive vs reactive behavior
-   - Free-text custom persona *(overrides the above)*
-6. **Start all services** (n8n, PostgreSQL, PostgREST, Kong)
-7. **Apply database schema** and seed data
-8. **Create n8n credentials** (Telegram Bot automatically)
-9. **Import all workflows** into n8n
-10. **Wire workflow references** (MCP Builder, Reminders, etc.)
-11. **Activate the agent** automatically
-
-### Step 2 — Add credentials in n8n UI
-
-Open n8n at the URL shown at the end of setup.
-
-The easiest way is to open each workflow and click **"Create new credential"** directly on the node that needs it. n8n will prompt you automatically.
-
-**Credentials you'll need:**
-
-| Credential | Name (exact!) | Where needed |
-|---|---|---|
-| Postgres | `Supabase Postgres` | Agent (Load Soul, Load History, etc.) |
-| Anthropic API | `Anthropic API` | Agent (Claude node), MCP Builder |
-| Telegram Bot | `Telegram Bot` | Agent (Telegram Trigger + Reply) — *created automatically by setup* |
-| OpenAI API | `OpenAI API` | Agent (Voice transcription via Whisper) — *optional, created by setup if key provided* |
-
-**Postgres connection details** *(shown in setup output)*:
-- Host: `db` | Port: `5432` | DB: `postgres` | User: `postgres`
-- Password: *(shown at end of setup)*
-- SSL: `disable`
-
-**MCP Builder — select LLM model:**
-- Open the MCP Builder workflow → click the LLM node
-- Select `Anthropic API` as the chat model
-- *(not set automatically due to n8n credential linking)*
-
-**Optional: Embeddings for semantic memory search:**
-
-During setup, you'll be asked for an embedding API key. This enables vector-based memory search (RAG) — the agent can find memories by meaning, not just exact keywords.
-
-- **OpenAI** (default): `text-embedding-3-small` — [platform.openai.com](https://platform.openai.com) (requires API key)
-- **Voyage AI**: `voyage-3-lite` — [voyageai.com](https://www.voyageai.com) (free tier available)
-- **Ollama**: `nomic-embed-text` — local, no API key needed (requires Ollama running on your server)
-
-Without an embedding key, the agent still works — it falls back to keyword-based memory search.
-
-**Optional: OpenAI API Key for voice messages:**
-
-If you chose OpenAI as your embedding provider, the same key is automatically used for voice transcription (Whisper) — no extra input needed. If you use a different embedding provider (or none), setup will ask separately for an OpenAI key. Without it, voice messages won't work — but photos, documents, and locations work without any extra keys.
-
-### Step 3 — Activate remaining workflows
-
-These workflows are **activated automatically** by setup — no action needed:
-
-| Workflow | Purpose |
-|---|---|
-| 🤖 dmo-claw Agent | Main agent — receives Telegram messages, calls tools |
-| 💓 Heartbeat | Background: proactive reminders + morning briefing (every 15 min) |
-| 🧠 Memory Consolidation | Background: summarizes conversations into long-term memory (daily 3am) |
-
-These workflows need to be **activated manually** in n8n UI:
-
-| Workflow | Purpose |
-|---|---|
-| 🏗️ MCP Builder | Builds new MCP Server workflows on demand |
-| ⏰ ReminderFactory | Creates timed Telegram reminders (sub-workflow) |
-| 🌤️ MCP: Weather | Example MCP Server — weather via Open-Meteo (no API key) |
-| ⚙️ WorkflowBuilder | Builds general n8n automations *(optional — requires [extra setup](#optional-workflowbuilder-with-claude-code))* |
-
-Sub-workflows (called by other workflows, no manual activation needed):
-
-| Workflow | Called by |
-|---|---|
-| 🔌 MCP Client | Agent — calls tools on MCP Servers |
-| 📚 MCP Library Manager | Agent — installs/removes MCP templates from catalog |
-| 🔐 credential-form | Library Manager — secure form for entering API keys |
-
-### Step 4 — Start chatting
-
-Send a message to your Telegram bot. It's ready!
-
----
-
-## Services & URLs
-
-After setup, these services run:
-
-| Service | URL | Purpose |
-|---|---|---|
-| n8n | `http://YOUR-IP:5678` | Workflow editor |
-| Supabase Studio | `http://localhost:3001` (via SSH tunnel) | Database admin UI |
-| PostgREST API | `http://YOUR-IP:8000` | REST API for PostgreSQL |
-
-### Accessing Supabase Studio
-
-Supabase Studio is bound to `localhost` only (not publicly exposed). To access it from your browser, open an SSH tunnel:
-
-```bash
-ssh -L 3001:localhost:3001 user@YOUR-VPS-IP
-```
-
-Then open `http://localhost:3001` in your browser. The tunnel stays open as long as the SSH session runs.
-
----
-
-## Building new MCP tools
-
-Just ask your agent:
-> "Build me an MCP server for the OpenLibrary API — look up books by ISBN"
-
-The MCP Builder will:
-1. Search for API documentation automatically (via SearXNG + Jina Reader)
-2. Generate working tool code
-3. Deploy two new n8n workflows (MCP trigger + sub-workflow)
-4. Register the server in the database
-5. Update the agent so it knows about the new tool
-
-> ⚠️ After each MCP build: **deactivate → reactivate** the new MCP workflow in n8n UI (required due to a webhook registration bug in n8n).
-
----
-
-## MCP Template Library
-
-Instead of building every MCP server from scratch, you can install pre-built templates from the [template catalog](https://github.com/freddy-schuetz/dmo-claw-templates). Just ask your agent:
-
-> "What templates are available?"
-> "Install weather-openmeteo"
-> "Remove weather-openmeteo"
-
-The Library Manager fetches templates from GitHub, imports the workflows into n8n, and registers the new MCP server automatically.
-
-> ⚠️ After installing a template: **deactivate → reactivate** the new MCP workflow in n8n UI (same webhook bug as MCP Builder).
-
-**Templates with API keys:** Some templates require an API key (e.g. NewsAPI). When you install one, the agent sends you a secure one-time link via Telegram. Click it, enter your key — done. The key is stored in the database and the template reads it at runtime. Links expire after 10 minutes and can only be used once.
-
-> "Install news-newsapi"
-> → Agent sends a link to enter your NewsAPI key
-> → Enter key in the form → template works immediately
-
-You can also regenerate a credential link later:
-> "Add credential for news-newsapi"
-
-Want to create your own templates? See the [template contribution guide](https://github.com/freddy-schuetz/dmo-claw-templates#creating-a-template).
-
----
-
-## Memory
-
-The agent has a multi-layered memory system — it remembers things you tell it and learns from your conversations over time.
-
-**Automatic memory:** The agent decides on its own what's worth remembering from your conversations (preferences, facts about you, decisions). No action needed.
-
-**Manual memory:** You can also explicitly ask it to remember something:
-
-> "Remember that I prefer morning meetings before 10am"
-> "Remember that I take my coffee black"
-
-**Memory search:** When relevant, the agent searches its memory to give you contextual answers. With an embedding API key (configured during setup), it uses semantic search — finding memories by meaning, not just keywords.
-
-> "What do you know about my coffee preferences?"
-> "What did we discuss about the server migration?"
-
-**Memory Consolidation** runs automatically every night at 3am. It summarizes the day's conversations into concise long-term memories with vector embeddings. This keeps the memory efficient and searchable. Requires an embedding API key (OpenAI, Voyage AI, or Ollama — configured during setup).
-
----
-
-## Task Management
-
-The agent can manage tasks for you — just tell it what you need in natural language.
-
-**Creating tasks:**
-> "Remind me to call the dentist tomorrow"
-> "Create a task: prepare presentation for Friday, high priority"
-> "I need to buy groceries by Saturday"
-
-**Checking tasks:**
-> "What are my tasks?"
-> "Show me overdue tasks"
-> "Task summary"
-
-**Updating tasks:**
-> "Mark the dentist task as done"
-> "Cancel the groceries task"
-> "Change the presentation priority to urgent"
-
-Tasks support priorities (`low`, `medium`, `high`, `urgent`), due dates, and subtasks.
-
----
-
-## Reminders
-
-The agent can set timed reminders that arrive as Telegram messages at the specified time.
-
-> "Remind me in 30 minutes to check the oven"
-> "Remind me tomorrow at 9am about the doctor's appointment"
-> "Set a reminder for Friday at 3pm: submit the report"
-
-Each reminder creates a temporary n8n workflow that fires once at the scheduled time, sends the Telegram message, and deletes itself.
-
----
-
-## Media Support
-
-The agent understands more than just text — send voice messages, photos, documents, or locations directly in Telegram.
-
-| Media type | What happens | Requires |
-|---|---|---|
-| **Voice messages** | Transcribed via OpenAI Whisper, then processed as text | OpenAI API Key |
-| **Photos** | Analyzed via OpenAI Vision (GPT-4o-mini), description passed to agent | OpenAI API Key |
-| **Documents (PDF)** | Text extracted via n8n's built-in PDF parser, passed to agent | — (built-in) |
-| **Location** | Converted to coordinates text, agent responds with context | — (built-in) |
-
-**Voice and photo analysis** require an OpenAI API key (configured during setup). Without it, voice messages and photos won't work — but documents and locations function without any extra API keys.
-
-> *[send a voice message]* — automatically transcribed and answered
-> *[send a photo]* — "What do you see?" — analyzed by GPT-4o-mini Vision
-> *[send a PDF]* — text extracted and analyzed by the agent
-> *[share location]* — agent responds with location context
-
----
-
-## Heartbeat & Morning Briefing
-
-The Heartbeat is a background workflow that runs every 15 minutes. It checks for overdue or urgent tasks and sends you a short Telegram reminder — without you having to ask.
-
-**Proactive reminders** are enabled automatically if you chose "Proactive" during setup. You can also toggle them via chat:
-
-> "Enable the heartbeat" / "Disable proactive messages"
-
-Rate-limited to one message every 2 hours (configurable) — no spam.
-
-**Morning Briefing** sends you a daily summary at your chosen time:
-
-> "Enable morning briefing at 8am"
-> "Set morning briefing to 7:30"
-> "Disable morning briefing"
-
-The briefing includes: overdue tasks, today's tasks, and a short motivating note — in your preferred language.
-
----
-
-## Customization
-
-Edit the `soul` and `agents` tables directly in Supabase Studio (`http://localhost:3001` via [SSH tunnel](#accessing-supabase-studio)) to change your agent's personality, tools, and behavior — no code changes needed.
-
-| Table | Contents |
-|---|---|
-| `soul` | Agent personality (name, persona, vibe, boundaries) — loaded into system prompt |
-| `agents` | Tool instructions, MCP config, memory behavior — loaded into system prompt |
-| `user_profiles` | User name, timezone, preferences (language, morning briefing) |
-| `tasks` | Task management (title, status, priority, due date, subtasks) |
-| `heartbeat_config` | Heartbeat + morning briefing settings (enabled, last_run, intervals) |
-| `tools_config` | API keys for Anthropic, embedding provider — used by Heartbeat + Consolidation |
-| `mcp_registry` | Available MCP servers (name, URL, tools) |
-| `template_credentials` | API keys for MCP templates (entered via credential form) |
-| `credential_tokens` | One-time tokens for secure credential entry (10 min TTL) |
-| `conversations` | Full chat history (session-based) |
-| `memory_long` | Long-term memory with vector embeddings (semantic search) |
-| `memory_daily` | Daily interaction log (used by Memory Consolidation) |
-
----
-
-## HTTPS Setup
-
-If you provided a domain during setup, HTTPS is configured automatically via Let's Encrypt + nginx. This is the default and works for most people. If not, you can add it later:
-
-```bash
-DOMAIN=n8n.yourdomain.com ./setup.sh
-```
-
-Point your domain's DNS A record to the VPS IP before running this.
-
-### Already have a reverse proxy?
-
-If you're running your own reverse proxy (Caddy, Traefik, nginx on another host, etc.), setup will ask whether to skip the built-in nginx + Let's Encrypt installation. Answer **yes** to skip — n8n will still be configured with the correct HTTPS webhook URLs, but TLS termination is left to your existing proxy.
-
-You can also set this in `.env` before running setup:
-
-```bash
-SKIP_REVERSE_PROXY=true
-```
-
-Your reverse proxy should forward traffic to `localhost:5678` (n8n) with WebSocket support enabled.
-
-> ⚠️ **Security note:** Without a domain, n8n runs over plain HTTP with no TLS and no rate limiting. This is fine for **local installs** (home server, LAN, testing). For a **public VPS**, always use a domain with HTTPS — otherwise credentials are transmitted unencrypted and the instance is exposed to the internet.
-
----
-
-## Updating
-
-**Normal update** — pulls code + Docker images, restarts services. Your personality, credentials, and data are preserved:
-
-```bash
-cd dmo-claw && ./setup.sh
-```
-
-**Full reconfigure** — re-runs the setup wizard (personality, language, timezone, proactive/reactive, embedding key). Your existing data and credentials are kept, but you can change all settings:
-
-```bash
-./setup.sh --force
-```
-
-Use `--force` when you want to change your agent's name, language, communication style, or switch between proactive/reactive mode.
-
----
-
-## Troubleshooting
-
-**Agent not responding to Telegram messages?**
-→ Check all workflows are **activated** in n8n UI
-
-**"Credential does not exist" error?**
-→ Add the Postgres credential manually (see Step 2)
-
-**MCP Builder fails?**
-→ Make sure the LLM node in MCP Builder has Anthropic API selected
-
-**Agent shows wrong time?**
-→ Re-run `./setup.sh --force` and set the correct timezone, or update it directly in `user_profiles` table via Supabase Studio
-
-**Heartbeat not sending messages?**
-→ Check that `heartbeat_config` has `enabled = true` for `heartbeat` (proactive) or `morning_briefing`. You can enable it via chat: *"Enable the heartbeat"*
-
-**Memory search returns nothing / vectorized: false?**
-→ Check your embedding API key in the `tools_config` table (tool_name: `embedding`). Without a valid key, memory still works but falls back to keyword search.
-
-**DB empty / Load Soul returns nothing?**
-→ Re-run seed: `./setup.sh` (skips already-set config)
-
-**Logs:**
-```bash
-docker logs dmo-claw        # n8n
-docker logs dmo-claw-db     # PostgreSQL
-docker logs dmo-claw-rest   # PostgREST
-```
-
----
-
-## Optional: WorkflowBuilder with Claude Code
-
-The WorkflowBuilder tool lets your agent build complex n8n workflows using Claude Code CLI. This requires additional setup:
-
-### 1. Install the community node
-
-In n8n UI → Settings → Community Nodes → Install:
-```
-n8n-nodes-claude-code-cli
-```
-
-### 2. Install Claude Code on your VPS
-
-```bash
-# Install Node.js if needed
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-
-# Install Claude Code CLI globally
-npm install -g @anthropic-ai/claude-code
-
-# Verify
-claude --version
-```
-
-### 3. Configure in n8n
-
-- Open the WorkflowBuilder workflow
-- The Claude Code node needs access to the CLI
-- Set `ANTHROPIC_API_KEY` environment variable in your n8n container:
-
-```yaml
-# Add to docker-compose.yml under n8n environment:
-- ANTHROPIC_API_KEY=your_key_here
-```
-
-Then restart: `docker compose up -d n8n`
-
-> Without this setup, the WorkflowBuilder tool won't function — but all other agent capabilities work fine without it.
-
----
 
 ## Stack
 
-- **[n8n](https://n8n.io)** — workflow automation engine
-- **PostgreSQL** — database
-- **[PostgREST](https://postgrest.org)** — auto-generated REST API
-- **[Supabase Studio](https://supabase.com)** — database admin UI
-- **[Kong](https://konghq.com)** — API gateway
-- **[Claude](https://anthropic.com)** (Anthropic) — LLM powering the agent
-- **Telegram** — messaging interface
-- **[SearXNG](https://docs.searxng.org)** — self-hosted meta search engine (no API key needed)
-- **[Open-Meteo](https://open-meteo.com)** — free weather API (example MCP, no key needed)
+| Component | Purpose |
+|---|---|
+| [n8n](https://n8n.io) | Workflow automation engine |
+| PostgreSQL | Database (reviews, users, tasks, memory) |
+| [PostgREST](https://postgrest.org) | Auto-generated REST API |
+| [Claude](https://anthropic.com) (Anthropic) | LLM powering the agent |
+| [OpenWebUI](https://openwebui.com) | Chat interface (via Pipe Function) |
+| [SearXNG](https://docs.searxng.org) | Self-hosted meta search engine |
+| [Supabase Studio](https://supabase.com) | Database admin UI |
 
----
+## Installation
+
+### Prerequisites
+
+- Linux VPS (Ubuntu 22.04+ or Debian 13, min. 2GB RAM)
+- [Anthropic API Key](https://console.anthropic.com)
+- Domain name (recommended for HTTPS)
+- OpenWebUI instance (for chat interface)
+
+### Quick Start
+
+```bash
+git clone https://github.com/freddy-schuetz/dmo-claw.git
+cd dmo-claw
+./setup.sh
+```
+
+The interactive setup configures everything: Docker services, database schema, n8n workflows, agent personality, DMO team members, and credentials.
+
+### Connect OpenWebUI
+
+1. Copy `docs/pipe-function.py` into OpenWebUI (Admin → Functions → New Pipe Function)
+2. Set the Valves:
+   - `N8N_WEBHOOK_URL`: Your n8n webhook URL (e.g. `https://your-domain/webhook/dmo-claw`)
+   - `BEARER_TOKEN`: The webhook bearer token from your `.env`
+3. Chat with the agent in OpenWebUI
+
+### Add Credentials in n8n
+
+After setup, open n8n and add credentials on nodes that need them:
+
+| Credential | Name (exact) | Purpose |
+|---|---|---|
+| Postgres | `Supabase Postgres` | All database queries |
+| Anthropic API | `Anthropic API` | Claude LLM |
+| Header Auth | `DMO Claw Webhook Auth` | Webhook authentication |
+
+## MCP Template Library
+
+Install tourism-specific tools from the [dmo-claw-templates](https://github.com/freddy-schuetz/dmo-claw-templates) catalog:
+
+| Template | Description | API Key |
+|---|---|---|
+| `weather-alpine` | Alpine weather, snow depth, freezing level, 7-day forecast | No (free) |
+| `google-reviews` | Query locally cached Google Reviews | Google Places API Key |
+| `instagram-post` | Create & schedule Instagram posts | Instagram Token + Account ID |
+
+Ask your agent:
+> "What templates are available?"
+> "Install weather-alpine"
+
+Templates requiring API keys will prompt you to enter the key via a secure one-time form link.
+
+## Role-Based Access
+
+DMO team members are configured during setup with roles:
+
+| Role | Tools | Use Case |
+|---|---|---|
+| `marketing` | Instagram posting, scheduling, weather | Sandra (Marketing) |
+| `member_relations` | Reviews, member businesses | Thomas (Mitgliederbetreuung) |
+| `admin` | All tools | Full access |
+| `readonly` | Information only | View-only access |
+
+Roles are managed in the `dmo_users` table (keyed by OpenWebUI email).
+
+## Customization
+
+Edit the `soul` and `agents` tables in Supabase Studio to change agent personality, tool instructions, and behavior — no code changes needed.
+
+DMO-specific soul entries: `organization_name`, `region`, `brand_hashtags`, `instagram_account`, `tone_of_voice`, `language`.
+
+## Upstream
+
+This project is a fork of [n8n-claw](https://github.com/freddy-schuetz/n8n-claw). To pull upstream improvements:
+
+```bash
+git fetch upstream
+git merge upstream/main
+```
 
 ## License
 

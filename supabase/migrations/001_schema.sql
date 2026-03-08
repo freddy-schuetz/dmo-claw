@@ -1114,10 +1114,9 @@ GRANT ALL ON SEQUENCE public.template_credentials_id_seq TO anon, authenticated,
 -- DMO-specific tables (Tourism Platform)
 -- ============================================================
 
--- DMO staff with roles
+-- DMO staff with roles (keyed by OpenWebUI/OI email)
 CREATE TABLE IF NOT EXISTS public.dmo_users (
-  telegram_id   BIGINT PRIMARY KEY,
-  oi_email      TEXT UNIQUE,
+  oi_email      TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
   role          TEXT NOT NULL DEFAULT 'readonly',
   active        BOOLEAN DEFAULT true,
