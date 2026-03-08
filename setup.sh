@@ -337,6 +337,7 @@ NGINX
   systemctl enable nginx
 
   # Update n8n webhook URL to HTTPS
+  set_env "N8N_URL" "https://${DOMAIN}"
   set_env "N8N_WEBHOOK_URL" "https://${DOMAIN}"
   set_env "N8N_HOST" "${DOMAIN}"
   set_env "N8N_PROTOCOL" "https"
@@ -357,6 +358,7 @@ elif [ -n "$DOMAIN" ] && [[ "$DOMAIN" != "your_"* ]] && [ "$SKIP_REVERSE_PROXY" 
   echo "  Skipping nginx + Let's Encrypt (handled by your reverse proxy)"
 
   # Configure n8n for HTTPS (proxy terminates TLS externally)
+  set_env "N8N_URL" "https://${DOMAIN}"
   set_env "N8N_WEBHOOK_URL" "https://${DOMAIN}"
   set_env "N8N_HOST" "${DOMAIN}"
   set_env "N8N_PROTOCOL" "https"
