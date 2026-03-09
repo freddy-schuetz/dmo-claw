@@ -1139,6 +1139,8 @@ CREATE TABLE IF NOT EXISTS public.member_businesses (
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE public.member_businesses DISABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS idx_member_businesses_category
   ON public.member_businesses (category);
 CREATE INDEX IF NOT EXISTS idx_member_businesses_place_id
@@ -1157,6 +1159,8 @@ CREATE TABLE IF NOT EXISTS public.reviews (
   answer_text     TEXT,
   fetched_at      TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.reviews DISABLE ROW LEVEL SECURITY;
 
 CREATE INDEX IF NOT EXISTS idx_reviews_business ON public.reviews (business_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_rating ON public.reviews (rating);
@@ -1180,6 +1184,23 @@ CREATE TABLE IF NOT EXISTS public.scheduled_posts (
 CREATE INDEX IF NOT EXISTS idx_scheduled_posts_pending
   ON public.scheduled_posts (scheduled_at) WHERE status = 'pending';
 
+-- Proactive notifications (agent delivers on next chat)
+CREATE TABLE IF NOT EXISTS public.notifications (
+  id              SERIAL PRIMARY KEY,
+  recipient_email TEXT NOT NULL DEFAULT 'all',
+  type            TEXT NOT NULL DEFAULT 'info',
+  title           TEXT NOT NULL,
+  body            TEXT,
+  source_workflow TEXT,
+  read            BOOLEAN NOT NULL DEFAULT false,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.notifications DISABLE ROW LEVEL SECURITY;
+
+CREATE INDEX IF NOT EXISTS idx_notifications_unread
+  ON public.notifications (recipient_email, read) WHERE read = false;
+
 -- GRANTs for DMO tables
 GRANT ALL ON TABLE public.dmo_users TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.member_businesses TO anon, authenticated, service_role;
@@ -1188,3 +1209,5 @@ GRANT ALL ON TABLE public.reviews TO anon, authenticated, service_role;
 GRANT ALL ON SEQUENCE public.reviews_id_seq TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.scheduled_posts TO anon, authenticated, service_role;
 GRANT ALL ON SEQUENCE public.scheduled_posts_id_seq TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.notifications TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.notifications_id_seq TO anon, authenticated, service_role;

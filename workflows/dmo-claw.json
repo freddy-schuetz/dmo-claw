@@ -1,10 +1,504 @@
 {
-  "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
   "name": "🤖 DMO Claw",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dmo-claw",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -16
+      ],
+      "webhookId": "dmo-claw-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "DMO Claw Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract message from OpenWebUI webhook payload\n// Payload: { messages: [{role, content}], user: {email, name} }\nconst body = $('Webhook Trigger').first().json.body;\nconst messages = body.messages || [];\nconst lastUserMsg = messages.filter(m => m.role === 'user').pop();\nconst userMessage = lastUserMsg?.content || '';\nconst userEmail = body.user?.email || '';\nconst userName = body.user?.name || 'Unknown';\n\nreturn [{\n  json: {\n    userMessage,\n    userEmail,\n    userName\n  }\n}];"
+      },
+      "id": "normalize-message",
+      "name": "Normalize Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, content FROM soul ORDER BY key",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-soul",
+      "name": "Load Soul",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        448,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, content FROM agents ORDER BY key",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-agents",
+      "name": "Load Agents Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        672,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' LIMIT 1",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-user",
+      "name": "Load User Profile",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        896,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT role, name FROM dmo_users WHERE oi_email = '{{ $('Normalize Message').first().json.userEmail }}' AND active = true LIMIT 1",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-user-role",
+      "name": "Load User Role",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT role, content FROM conversations WHERE session_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' ORDER BY created_at DESC LIMIT 20",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-history",
+      "name": "Load Conversation History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1344,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const soul = $('Load Soul').all().map(i => i.json);\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Normalize Message').first().json.userMessage || '';\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userName = $('Normalize Message').first().json.userName || 'Unknown';\n\nconst baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst dbHeaders = { 'apikey': serviceKey, 'Authorization': 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet notifications = [];\ntry {\n  notifications = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/rest/v1/notifications?read=eq.false&or=(recipient_email.eq.' + encodeURIComponent(userEmail) + ',recipient_email.eq.all)&order=created_at.desc&limit=10', headers: dbHeaders });\n  if (notifications && notifications.length > 0) {\n    const ids = notifications.map(n => n.id);\n    await helpers.httpRequest({ method: 'PATCH', url: baseUrl + '/rest/v1/notifications?id=in.(' + ids.join(',') + ')', headers: { ...dbHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ read: true }) });\n  }\n} catch(e) {}\n\nconst soulText = soul.map(s => '## ' + s.key + '\\n' + s.content).join('\\n\\n');\nconst agentText = agents.map(a => '## ' + a.key + '\\n' + a.content).join('\\n\\n');\nconst userText = user.display_name ? 'Name: ' + user.display_name + ' (' + user.name + ')\\nTimezone: ' + user.timezone + '\\nKontext: ' + user.context + '\\nPrefs: ' + JSON.stringify(user.preferences) + '\\nSetup done: ' + (user.setup_done !== false ? 'true' : 'false') : 'Unbekannter User';\n\nconst roleContextMap = { marketing: 'Rolle: Marketing (' + roleName + ')\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.', member_relations: 'Rolle: Mitgliederbetreuung (' + roleName + ')\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.', admin: 'Rolle: Admin (' + roleName + ')\\nVollzugriff auf alle Tools und Funktionen.', readonly: 'Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausfuehren.' };\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\nconst historyText = history.reverse().map(h => h.role + ': ' + h.content).join('\\n');\n\nlet notifText = '';\nif (notifications && notifications.length > 0) {\n  notifText = '\\n\\n# UNGELESENE BENACHRICHTIGUNGEN\\nWICHTIG: Erwaehne diese Benachrichtigungen proaktiv am Anfang deiner Antwort!\\n';\n  for (const n of notifications) { notifText += '- [' + n.type + '] ' + n.title + ': ' + (n.body || '') + '\\n'; }\n}\n\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = '# CURRENT TIME\\n' + now + '\\n\\n# SOUL\\n' + soulText + '\\n\\n# AGENT CONFIG\\n' + agentText + '\\n\\n# USER ROLE\\n' + roleContext + '\\n\\n# USER PROFILE\\n' + userText + notifText + '\\n\\n# RECENT CONVERSATION\\n' + historyText;\n\nreturn [{ json: { systemPrompt, userMessage, userEmail, userName, userId: userEmail, sessionId: 'oi:' + userEmail } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build System Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}",
+          "maxIterations": 10
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2424,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-sonnet-4-6",
+          "mode": "list",
+          "cachedResultName": "Claude Sonnet 4.6"
+        },
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0.7
+        }
+      },
+      "id": "claude-llm",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1792,
+        208
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save conversation to Supabase\nconst userMessage = $('Build System Prompt').first().json.userMessage;\nconst assistantMessage = $('AI Agent').first().json.output;\nconst sessionId = $('Build System Prompt').first().json.sessionId;\nconst userId = $('Build System Prompt').first().json.userId;\n\n// Mark onboarding as done after first response\nconst setupDone = $('Load User Profile').first()?.json?.setup_done;\nconst markSetupDone = setupDone === false;\n\nreturn [{\n  json: {\n    userMessage,\n    assistantMessage,\n    sessionId,\n    userId,\n    markSetupDone\n  }\n}];"
+      },
+      "id": "prepare-save",
+      "name": "Prepare Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'user', '{{ $json.userMessage.replace(/'/g, \"''\") }}'); INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'assistant', '{{ $json.assistantMessage.replace(/'/g, \"''\") }}'); {{ $json.markSetupDone ? \"UPDATE user_profiles SET setup_done = true WHERE user_id = 'oi:\" + $json.userId + \"';\" : '' }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "save-conversation",
+      "name": "Save Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3632,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO memory_daily (date, content, role, user_id) VALUES (CURRENT_DATE, '{{ ($json.userMessage + ' → ' + $json.assistantMessage).replace(/'/g, \"''\") }}', 'interaction', '{{ $json.userId }}')",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "save-daily-log",
+      "name": "Save Daily Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3632,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uqYlbBp0N4zv2iMf",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ output: $json.assistantMessage }) }}"
+      },
+      "id": "webhook-reply",
+      "name": "Webhook Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3632,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Search long-term memory. Input: a search query string.",
+        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ search_query: searchQuery })\n  });\n}\nreturn JSON.stringify(result);"
+      },
+      "id": "tool-memory-search",
+      "name": "Memory Search",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Save important info to long-term memory. Input: JSON with content (string), category (general/decision/preference/contact/project), importance (1-10).",
+        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify(body)\n});\nreturn JSON.stringify({ success: true, saved: content, vectorized: !!embedding });"
+      },
+      "id": "tool-memory-save",
+      "name": "Memory Save",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2048,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Make HTTP requests. Input: JSON with url (string), optional method (GET/POST/PATCH/DELETE), optional headers (object), optional body (object for POST/PATCH).",
+        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {url: query}; }\nif (!input.url) return 'Fehler: url ist Pflicht';\nconst opts = {\n  method: input.method || 'GET',\n  url: input.url,\n  headers: input.headers || {}\n};\nif (input.body && ['POST','PATCH','PUT'].includes((input.method||'').toUpperCase())) {\n  opts.body = input.body;\n  if (!opts.headers['Content-Type']) opts.headers['Content-Type'] = 'application/json';\n}\ntry {\n  const result = await helpers.httpRequest(opts);\n  return typeof result === 'string' ? result.substring(0,4000) : JSON.stringify(result).substring(0,4000);\n} catch(e) {\n  return 'HTTP Error: ' + e.message;\n}"
+      },
+      "id": "tool-http",
+      "name": "HTTP Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2176,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Search the web. Input: search query as string or JSON with q field. Returns top 5 results with title, URL, and snippet.",
+        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = { q: query }; }\nconst q = input.q || input.query || query;\nconst result = await helpers.httpRequest({\n  method: 'GET',\n  url: `http://searxng:8080/search?q=${encodeURIComponent(q)}&format=json&language=de`,\n  headers: { 'Accept': 'application/json' }\n});\nconst hits = (result.results || []).slice(0, 5).map(r =>\n  `${r.title}\\n${r.url}\\n${r.content || ''}`\n).join('\\n\\n');\nreturn hits || 'Keine Ergebnisse gefunden.';"
+      },
+      "id": "tool-web-search",
+      "name": "Web Search",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2304,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "List or manage n8n workflows. Input: JSON with action (list/get/create) and optional workflowId.",
+        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {action:'list'}; }\nconst apiKey = '{{N8N_API_KEY}}';\nconst hdrs = {'X-N8N-API-KEY': apiKey, 'Content-Type': 'application/json'};\nlet result;\nif (input.action === 'list') {\n  result = await helpers.httpRequest({method:'GET', url:'{{N8N_INTERNAL_URL}}/api/v1/workflows', headers: hdrs});\n} else if (input.action === 'get' && input.workflowId) {\n  result = await helpers.httpRequest({method:'GET', url:'{{N8N_INTERNAL_URL}}/api/v1/workflows/'+input.workflowId, headers: hdrs});\n} else {\n  return JSON.stringify({error: 'Use action: list or get'});\n}\nreturn JSON.stringify(result);"
+      },
+      "id": "tool-self-modify",
+      "name": "Self Modify",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2432,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Set a timed reminder. Use when user says 'remind me at...', 'remind me in X minutes/hours'. Input: time as ISO 8601 (e.g. 2026-03-01T10:00:00+01:00) and message text.",
+        "workflowId": {
+          "__rl": true,
+          "value": "tTAmOZjnSb0LhXvb",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "tool-reminder-wf",
+      "name": "Reminder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        2560,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Builds new n8n workflows for general automations and integrations. Use when the user explicitly wants to automate something or build an integration workflow. NOT for MCP servers — use mcp_builder for that. NOT as a fallback when other tools fail. Input: JSON with 'task' (description of the automation to build).",
+        "workflowId": {
+          "__rl": true,
+          "value": "hfKOqn9XDe9NeXmu",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "tool-workflow-builder",
+      "name": "WorkflowBuilder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "name": "mcp_builder",
+        "description": "Builds a new MCP Server workflow in n8n. ALWAYS use this when the user wants to build an MCP server, MCP tool, or API integration as MCP. NEVER use WorkflowBuilder for MCP. On error: report the error, do NOT fall back to WorkflowBuilder. Input: JSON with 'task' (description of what the server should do). After build: user must deactivate + reactivate the workflow in n8n UI (webhook registration bug).",
+        "workflowId": {
+          "__rl": true,
+          "value": "2yp38ongINaRCf9u",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "mcp-builder-tool",
+      "name": "MCP Builder",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [
+        2816,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Calls a tool on an MCP server. Use when the user asks something that an available MCP server can answer (weather, book lookup, etc.). Required parameters: mcp_url (server URL), tool_name (tool to call), arguments (JSON object with parameters). Check mcp_registry table for available servers and their tools.",
+        "jsCode": "// Debug: figure out what query actually is\nconst qType = typeof query;\nlet mcpUrl = '', toolName = '', args = {};\n\nif (qType === 'object' && query !== null) {\n  // query is already an object\n  mcpUrl = query.mcp_url || '';\n  toolName = query.tool_name || '';\n  args = query.arguments || {};\n} else if (qType === 'string') {\n  try {\n    const parsed = JSON.parse(query);\n    mcpUrl = parsed.mcp_url || '';\n    toolName = parsed.tool_name || '';\n    args = parsed.arguments || {};\n  } catch(e) {\n    return 'Parse error: query=' + String(query).substring(0,200) + ' type=' + qType;\n  }\n} else {\n  return 'Unexpected query type: ' + qType + ' value: ' + String(query).substring(0,200);\n}\n\nif (typeof args === 'string') try { args = JSON.parse(args); } catch(e) {}\nif (!mcpUrl || !toolName) return 'Fehler: mcp_url=' + mcpUrl + ' tool_name=' + toolName + ' (query type was: ' + qType + ')';\n\ntry {\n  // 1. Initialize\n  const init = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream'},\n    body: JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'dmo-claw-mcp',version:'1.0'}}}),\n    returnFullResponse: true, encoding: 'utf-8', json: false\n  });\n  const sid = init.headers && init.headers['mcp-session-id'];\n  if (!sid) return 'MCP: Kein session-id. Body: ' + String(init.body||init).substring(0,200);\n\n  // 2. Initialized\n  await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'}),\n    json: false\n  });\n\n  // 3. Call tool\n  const resp = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:toolName,arguments:args}}),\n    json: false\n  });\n\n  const bodyStr = String(resp);\n  const dataLine = bodyStr.split('\\n').find(l => l.startsWith('data: '));\n  if (!dataLine) return 'MCP: Keine Daten. Response: ' + bodyStr.substring(0,200);\n  const result = JSON.parse(dataLine.substring(6));\n  if (result.error) return 'MCP Error: ' + JSON.stringify(result.error);\n  return result.result?.content?.[0]?.text || JSON.stringify(result.result);\n} catch(e) {\n  return 'MCP Error: ' + e.message;\n}"
+      },
+      "id": "mcp-client-code",
+      "name": "MCP Client",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2944,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Manage tasks. Input: JSON with action and parameters.\n\nActions:\n- list: List tasks. Optional: status (pending/in_progress/done/cancelled), priority, due_before (ISO date)\n- create: Create task. Required: title. Optional: description, priority (low/medium/high/urgent), due_date (ISO 8601), parent_id (for subtasks), tags (array)\n- update: Update task. Required: id. Optional: title, description, status, priority, due_date, tags\n- delete: Delete task. Required: id\n- summary: Overview of all pending/in_progress tasks grouped by priority\n- set_preference: Save user preference. Required: key, value. Example: {\"action\":\"set_preference\",\"key\":\"morning_briefing\",\"value\":{\"enabled\":true,\"time\":\"08:00\"}}\n\nExamples:\n{\"action\":\"create\",\"title\":\"Call dentist\",\"due_date\":\"2026-03-10T10:00:00+01:00\",\"priority\":\"high\"}\n{\"action\":\"list\",\"status\":\"pending\"}\n{\"action\":\"update\",\"id\":5,\"status\":\"done\"}\n{\"action\":\"summary\"}",
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userId = `oi:${userEmail}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
+      },
+      "id": "tool-task-manager",
+      "name": "Task Manager",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        3072,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Manage the MCP template library. Install, list, or remove MCP server templates from the catalog. Add API credentials for installed templates.\n\nActions:\n- list_templates: Show available templates. Optional: category filter.\n- install_template: Install a template by ID. Creates the MCP server workflow.\n- remove_template: Remove an installed template by ID.\n- add_credential: Generate secure one-time link(s) to add/update API key(s) for an installed template. Required: id. Optional: cred_key (if omitted, generates links for ALL required credentials).\n\nInput: JSON with action and parameters.\nExamples:\n{\"action\":\"list_templates\"}\n{\"action\":\"install_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"remove_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"add_credential\",\"id\":\"google-reviews\"}",
+        "workflowId": {
+          "__rl": true,
+          "value": "sRg6WiN6nIEQ3WJs",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "tool-library-manager",
+      "name": "Library Manager",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        3200,
+        208
+      ]
+    }
+  ],
   "connections": {
     "Webhook Trigger": {
       "main": [
@@ -283,506 +777,9 @@
       ]
     }
   },
-  "nodes": [
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "dmo-claw",
-        "authentication": "headerAuth",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        -16
-      ],
-      "webhookId": "dmo-claw-webhook",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "DMO Claw Webhook Auth"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Extract message from OpenWebUI webhook payload\n// Payload: { messages: [{role, content}], user: {email, name} }\nconst body = $('Webhook Trigger').first().json.body;\nconst messages = body.messages || [];\nconst lastUserMsg = messages.filter(m => m.role === 'user').pop();\nconst userMessage = lastUserMsg?.content || '';\nconst userEmail = body.user?.email || '';\nconst userName = body.user?.name || 'Unknown';\n\nreturn [{\n  json: {\n    userMessage,\n    userEmail,\n    userName\n  }\n}];"
-      },
-      "id": "normalize-message",
-      "name": "Normalize Message",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        240,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT key, content FROM soul ORDER BY key",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "load-soul",
-      "name": "Load Soul",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        1200,
-        -16
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      },
-      "alwaysOutputData": true,
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT key, content FROM agents ORDER BY key",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "load-agents",
-      "name": "Load Agents Config",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        1424,
-        -16
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      },
-      "alwaysOutputData": true,
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' LIMIT 1",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "load-user",
-      "name": "Load User Profile",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        1648,
-        -16
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      },
-      "alwaysOutputData": true,
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT role, name FROM dmo_users WHERE oi_email = '{{ $('Normalize Message').first().json.userEmail }}' AND active = true LIMIT 1",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "load-user-role",
-      "name": "Load User Role",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        1760,
-        -16
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      },
-      "alwaysOutputData": true,
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT role, content FROM conversations WHERE session_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' ORDER BY created_at DESC LIMIT 20",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "load-history",
-      "name": "Load Conversation History",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        1872,
-        -16
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      },
-      "alwaysOutputData": true,
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
-        "jsCode": "// Build system prompt from loaded context\nconst soul = $('Load Soul').all().map(i => i.json);\n// Deduplicate: sequential node chaining causes cartesian product (6 soul × 6 agents = 36 items)\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\n// Deduplicate conversation history (36x duplicated due to upstream cartesian product)\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Normalize Message').first().json.userMessage || '';\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userName = $('Normalize Message').first().json.userName || 'Unknown';\n\n// Build soul text\nconst soulText = soul.map(s => `## ${s.key}\\n${s.content}`).join('\\n\\n');\nconst agentText = agents.map(a => `## ${a.key}\\n${a.content}`).join('\\n\\n');\nconst userText = user.display_name \n  ? `Name: ${user.display_name} (${user.name})\\nTimezone: ${user.timezone}\\nKontext: ${user.context}\\nPrefs: ${JSON.stringify(user.preferences)}\\nSetup done: ${user.setup_done !== false ? 'true' : 'false'}`\n  : 'Unbekannter User';\n\n// Role-based tool visibility\nconst roleContextMap = {\n  marketing: `Rolle: Marketing (${roleName})\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.`,\n  member_relations: `Rolle: Mitgliederbetreuung (${roleName})\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.`,\n  admin: `Rolle: Admin (${roleName})\\nVollzugriff auf alle Tools und Funktionen.`,\n  readonly: `Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausführen (kein Posting, keine Änderungen).`\n};\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\n// Build conversation history\nconst historyText = history.reverse().map(h => `${h.role}: ${h.content}`).join('\\n');\n\nconst toolHint = `\\n\\n# WICHTIGE TOOLS\\n- WorkflowBuilder: Nutze dieses Tool um n8n Workflows zu erstellen. Wenn der User eine Integration, API-Anbindung oder Automatisierung braucht, rufe WorkflowBuilder auf statt nachzufragen. Gib alle Details (URLs, Credentials, Anforderungen) direkt weiter.\\n- Reminder: Erstellt zeitgesteuerte Erinnerungen.\\n- Memory Search/Save: Langzeitgedächtnis.\\n- HTTP Tool: Einfache GET requests (keine Auth).\\n- Web Search: Durchsucht das Internet. Nutze dieses Tool wenn der User aktuelle Infos braucht, Fragen hat die du nicht sicher beantworten kannst, oder nach etwas Konkretem sucht.\\n- Self Modify: n8n Workflows auflisten/anzeigen.`;\n\n// Current date/time in user's timezone\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = `# CURRENT TIME\\n${now}\\n\\n# SOUL\\n${soulText}\\n\\n# AGENT CONFIG\\n${agentText}\\n\\n# USER ROLE\\n${roleContext}\\n\\n# USER PROFILE\\n${userText}\\n\\n# RECENT CONVERSATION\\n${historyText}`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userMessage,\n    userEmail,\n    userName,\n    userId: userEmail,\n    sessionId: `oi:${userEmail}`\n  }\n}];"
-      },
-      "id": "build-prompt",
-      "name": "Build System Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2096,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.userMessage }}",
-        "options": {
-          "systemMessage": "={{ $json.systemPrompt }}",
-          "maxIterations": 10
-        }
-      },
-      "id": "ai-agent",
-      "name": "AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
-      "position": [
-        2832,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "model": {
-          "__rl": true,
-          "value": "claude-sonnet-4-6",
-          "mode": "list",
-          "cachedResultName": "Claude Sonnet 4.6"
-        },
-        "options": {
-          "maxTokensToSample": 4096,
-          "temperature": 0.7
-        }
-      },
-      "id": "claude-llm",
-      "name": "Claude",
-      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-      "typeVersion": 1.3,
-      "position": [
-        2320,
-        208
-      ],
-      "credentials": {
-        "anthropicApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Anthropic API"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Save conversation to Supabase\nconst userMessage = $('Build System Prompt').first().json.userMessage;\nconst assistantMessage = $('AI Agent').first().json.output;\nconst sessionId = $('Build System Prompt').first().json.sessionId;\nconst userId = $('Build System Prompt').first().json.userId;\n\n// Mark onboarding as done after first response\nconst setupDone = $('Load User Profile').first()?.json?.setup_done;\nconst markSetupDone = setupDone === false;\n\nreturn [{\n  json: {\n    userMessage,\n    assistantMessage,\n    sessionId,\n    userId,\n    markSetupDone\n  }\n}];"
-      },
-      "id": "prepare-save",
-      "name": "Prepare Save",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3680,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'user', '{{ $json.userMessage.replace(/'/g, \"''\") }}'); INSERT INTO conversations (session_id, user_id, role, content) VALUES ('{{ $json.sessionId }}', '{{ $json.userId }}', 'assistant', '{{ $json.assistantMessage.replace(/'/g, \"''\") }}'); {{ $json.markSetupDone ? \"UPDATE user_profiles SET setup_done = true WHERE user_id = 'oi:\" + $json.userId + \"';\" : '' }}",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "save-conversation",
-      "name": "Save Conversation",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        3904,
-        -208
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO memory_daily (date, content, role, user_id) VALUES (CURRENT_DATE, '{{ ($json.userMessage + ' → ' + $json.assistantMessage).replace(/'/g, \"''\") }}', 'interaction', '{{ $json.userId }}')",
-        "options": {
-          "queryBatching": "independently"
-        }
-      },
-      "id": "save-daily-log",
-      "name": "Save Daily Log",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        3904,
-        176
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Supabase Postgres"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ output: $('AI Agent').first().json.output }) }}",
-        "options": {}
-      },
-      "id": "webhook-reply",
-      "name": "Webhook Reply",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.5,
-      "position": [
-        3904,
-        -16
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Search long-term memory. Input: a search query string.",
-        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {search_query: query}; }\nconst searchQuery = input.search_query || input.query || query;\nconst embedding = await getEmbedding(searchQuery);\n\nlet result;\nif (embedding) {\n  // Vector search via cosine similarity\n  result = await helpers.httpRequest({\n    method: 'POST',\n    url: '{{SUPABASE_URL}}/rest/v1/rpc/search_memory',\n    headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ query_embedding: JSON.stringify(embedding), match_threshold: 0.5, match_count: 5 })\n  });\n} else {\n  // Fallback to keyword search\n  result = await helpers.httpRequest({\n    method: 'POST',\n    url: '{{SUPABASE_URL}}/rest/v1/rpc/search_memory_keyword',\n    headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ search_query: searchQuery })\n  });\n}\nreturn JSON.stringify(result);"
-      },
-      "id": "tool-memory-search",
-      "name": "Memory Search",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        2448,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Save important info to long-term memory. Input: JSON with content (string), category (general/decision/preference/contact/project), importance (1-10).",
-        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {content: query}; }\nconst content = input.content || query;\nconst embedding = await getEmbedding(content);\nconst body = { content, category: input.category || 'general', importance: input.importance || 5, metadata: { source: 'agent' } };\nif (embedding) body.embedding = JSON.stringify(embedding);\nconst result = await helpers.httpRequest({\n  method: 'POST',\n  url: '{{SUPABASE_URL}}/rest/v1/memory_long',\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify(body)\n});\nreturn JSON.stringify({ success: true, saved: content, vectorized: !!embedding });"
-      },
-      "id": "tool-memory-save",
-      "name": "Memory Save",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        2576,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Make HTTP requests. Input: JSON with url (string) and optional method (GET/POST).",
-        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {url: query}; }\nif (!input.url) return 'Fehler: url ist Pflicht';\nconst result = await helpers.httpRequest({\n  method: input.method || 'GET',\n  url: input.url,\n  headers: input.headers || {}\n});\nreturn typeof result === 'string' ? result.substring(0,4000) : JSON.stringify(result).substring(0,4000);"
-      },
-      "id": "tool-http",
-      "name": "HTTP Tool",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        2704,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Search the web. Input: search query as string or JSON with q field. Returns top 5 results with title, URL, and snippet.",
-        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = { q: query }; }\nconst q = input.q || input.query || query;\nconst result = await helpers.httpRequest({\n  method: 'GET',\n  url: `http://searxng:8080/search?q=${encodeURIComponent(q)}&format=json&language=de`,\n  headers: { 'Accept': 'application/json' }\n});\nconst hits = (result.results || []).slice(0, 5).map(r =>\n  `${r.title}\\n${r.url}\\n${r.content || ''}`\n).join('\\n\\n');\nreturn hits || 'Keine Ergebnisse gefunden.';"
-      },
-      "id": "tool-web-search",
-      "name": "Web Search",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        2832,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "List or manage n8n workflows. Input: JSON with action (list/get/create) and optional workflowId.",
-        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {action:'list'}; }\nconst apiKey = '{{N8N_API_KEY}}';\nconst hdrs = {'X-N8N-API-KEY': apiKey, 'Content-Type': 'application/json'};\nlet result;\nif (input.action === 'list') {\n  result = await helpers.httpRequest({method:'GET', url:'{{N8N_INTERNAL_URL}}/api/v1/workflows', headers: hdrs});\n} else if (input.action === 'get' && input.workflowId) {\n  result = await helpers.httpRequest({method:'GET', url:'{{N8N_INTERNAL_URL}}/api/v1/workflows/'+input.workflowId, headers: hdrs});\n} else {\n  return JSON.stringify({error: 'Use action: list or get'});\n}\nreturn JSON.stringify(result);"
-      },
-      "id": "tool-self-modify",
-      "name": "Self Modify",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        2960,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Set a timed reminder. Use when user says 'remind me at...', 'remind me in X minutes/hours'. Input: time as ISO 8601 (e.g. 2026-03-01T10:00:00+01:00) and message text.",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_REMINDER_FACTORY_ID",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        }
-      },
-      "id": "tool-reminder-wf",
-      "name": "Reminder",
-      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-      "typeVersion": 2.2,
-      "position": [
-        2960,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Builds new n8n workflows for general automations and integrations. Use when the user explicitly wants to automate something or build an integration workflow. NOT for MCP servers — use mcp_builder for that. NOT as a fallback when other tools fail. Input: JSON with 'task' (description of the automation to build).",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_WORKFLOW_BUILDER_ID",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        }
-      },
-      "id": "tool-workflow-builder",
-      "name": "WorkflowBuilder",
-      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-      "typeVersion": 2.2,
-      "position": [
-        3088,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "name": "mcp_builder",
-        "description": "Builds a new MCP Server workflow in n8n. ALWAYS use this when the user wants to build an MCP server, MCP tool, or API integration as MCP. NEVER use WorkflowBuilder for MCP. On error: report the error, do NOT fall back to WorkflowBuilder. Input: JSON with 'task' (description of what the server should do). After build: user must deactivate + reactivate the workflow in n8n UI (webhook registration bug).",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_MCP_BUILDER_ID",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        }
-      },
-      "id": "mcp-builder-tool",
-      "name": "MCP Builder",
-      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-      "typeVersion": 2,
-      "position": [
-        3344,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Calls a tool on an MCP server. Use when the user asks something that an available MCP server can answer (weather, book lookup, etc.). Required parameters: mcp_url (server URL), tool_name (tool to call), arguments (JSON object with parameters). Check mcp_registry table for available servers and their tools.",
-        "jsCode": "// Debug: figure out what query actually is\nconst qType = typeof query;\nlet mcpUrl = '', toolName = '', args = {};\n\nif (qType === 'object' && query !== null) {\n  // query is already an object\n  mcpUrl = query.mcp_url || '';\n  toolName = query.tool_name || '';\n  args = query.arguments || {};\n} else if (qType === 'string') {\n  try {\n    const parsed = JSON.parse(query);\n    mcpUrl = parsed.mcp_url || '';\n    toolName = parsed.tool_name || '';\n    args = parsed.arguments || {};\n  } catch(e) {\n    return 'Parse error: query=' + String(query).substring(0,200) + ' type=' + qType;\n  }\n} else {\n  return 'Unexpected query type: ' + qType + ' value: ' + String(query).substring(0,200);\n}\n\nif (typeof args === 'string') try { args = JSON.parse(args); } catch(e) {}\nif (!mcpUrl || !toolName) return 'Fehler: mcp_url=' + mcpUrl + ' tool_name=' + toolName + ' (query type was: ' + qType + ')';\n\ntry {\n  // 1. Initialize\n  const init = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream'},\n    body: JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'dmo-claw-mcp',version:'1.0'}}}),\n    returnFullResponse: true, encoding: 'utf-8', json: false\n  });\n  const sid = init.headers && init.headers['mcp-session-id'];\n  if (!sid) return 'MCP: Kein session-id. Body: ' + String(init.body||init).substring(0,200);\n\n  // 2. Initialized\n  await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'}),\n    json: false\n  });\n\n  // 3. Call tool\n  const resp = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:toolName,arguments:args}}),\n    json: false\n  });\n\n  const bodyStr = String(resp);\n  const dataLine = bodyStr.split('\\n').find(l => l.startsWith('data: '));\n  if (!dataLine) return 'MCP: Keine Daten. Response: ' + bodyStr.substring(0,200);\n  const result = JSON.parse(dataLine.substring(6));\n  if (result.error) return 'MCP Error: ' + JSON.stringify(result.error);\n  return result.result?.content?.[0]?.text || JSON.stringify(result.result);\n} catch(e) {\n  return 'MCP Error: ' + e.message;\n}",
-        "specifyInputSchema": false
-      },
-      "id": "mcp-client-code",
-      "name": "MCP Client",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        3472,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "description": "Manage tasks. Input: JSON with action and parameters.\n\nActions:\n- list: List tasks. Optional: status (pending/in_progress/done/cancelled), priority, due_before (ISO date)\n- create: Create task. Required: title. Optional: description, priority (low/medium/high/urgent), due_date (ISO 8601), parent_id (for subtasks), tags (array)\n- update: Update task. Required: id. Optional: title, description, status, priority, due_date, tags\n- delete: Delete task. Required: id\n- summary: Overview of all pending/in_progress tasks grouped by priority\n- set_preference: Save user preference. Required: key, value. Example: {\"action\":\"set_preference\",\"key\":\"morning_briefing\",\"value\":{\"enabled\":true,\"time\":\"08:00\"}}\n\nExamples:\n{\"action\":\"create\",\"title\":\"Call dentist\",\"due_date\":\"2026-03-10T10:00:00+01:00\",\"priority\":\"high\"}\n{\"action\":\"list\",\"status\":\"pending\"}\n{\"action\":\"update\",\"id\":5,\"status\":\"done\"}\n{\"action\":\"summary\"}",
-        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userId = `oi:${userEmail}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
-      },
-      "id": "tool-task-manager",
-      "name": "Task Manager",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
-      "position": [
-        3600,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "name": "library_manager",
-        "description": "Manage the MCP template library. Install, list, or remove MCP server templates from the catalog. Add API credentials for installed templates.\n\nActions:\n- list_templates: Show available templates. Optional: category filter.\n- install_template: Install a template by ID. Creates the MCP server workflow.\n- remove_template: Remove an installed template by ID.\n- add_credential: Generate secure one-time link(s) to add/update API key(s) for an installed template. Required: id. Optional: cred_key (if omitted, generates links for ALL required credentials).\n\nInput: JSON with action and parameters.\nExamples:\n{\"action\":\"list_templates\"}\n{\"action\":\"install_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"remove_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"add_credential\",\"id\":\"google-reviews\"}",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_LIBRARY_MANAGER_ID",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        }
-      },
-      "id": "tool-library-manager",
-      "name": "Library Manager",
-      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-      "typeVersion": 2.2,
-      "position": [
-        3728,
-        208
-      ]
-    }
-  ]
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
 }
