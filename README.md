@@ -6,11 +6,13 @@ First use case: **Tourismusverband Zugspitzregion** with role-based access for M
 
 ## Features
 
-- **Google Reviews** — query locally cached reviews, rating summaries, unanswered review alerts
+- **Google Reviews** — query locally cached reviews, rating summaries, automatic alerts on critical reviews (≤3 stars)
 - **Instagram Posting** — create posts via Graph API, schedule posts for later, automatic token rotation
 - **Alpine Weather** — snow depth, freezing level, 7-day forecast via Open-Meteo (free, no API key)
-- **Role-based access** — marketing sees posting tools, member relations sees review tools, admins see everything
+- **Role-based access** — write operations filtered from system prompt per role (not just instruction-based), admins see everything
+- **Proactive notifications** — background workflows write to a notifications table; the agent loads unread alerts at conversation start and marks them read
 - **Proactive briefings** — daily morning briefing (weather, reviews, posts, tasks) and weekly reports
+- **Multi-user support** — conversation history, daily logs, and user profiles isolated per OpenWebUI email; shared long-term memory pool
 - **Task management** — priorities, due dates, subtasks
 - **Long-term memory** — remembers conversations with optional semantic search (RAG)
 - **MCP Template Library** — install pre-built tools from [dmo-claw-templates](https://github.com/freddy-schuetz/dmo-claw-templates)
@@ -33,13 +35,16 @@ DMO Claw Agent (Claude Sonnet)
   +-- Self Modify         — inspect/list n8n workflows
 
 Background Workflows:
-  review-batch             — daily: fetch Google Reviews → local DB → alert on <= 3 stars
+  review-batch             — daily: fetch Google Reviews → local DB → notifications on ≤3 stars
   instagram-token-rotation — daily: check & refresh Instagram token
   post-scheduler           — every minute: publish scheduled posts
   morning-briefing         — daily 07:30: weather + reviews + posts + tasks summary
   weekly-report            — Friday 16:00: weekly aggregated report
   memory-consolidation     — daily 03:00: summarize conversations → long-term memory
   heartbeat                — every 15 min: proactive task reminders
+
+Database:
+  notifications            — proactive alerts from background workflows, loaded into agent prompt
 ```
 
 ## Stack
@@ -111,12 +116,14 @@ Templates requiring API keys will prompt you to enter the key via a secure one-t
 
 DMO team members are configured during setup with roles:
 
-| Role | Tools | Use Case |
+| Role | Access | Example |
 |---|---|---|
-| `marketing` | Instagram posting, scheduling, weather | Sandra (Marketing) |
-| `member_relations` | Reviews, member businesses | Thomas (Mitgliederbetreuung) |
-| `admin` | All tools | Full access |
+| `marketing` | Instagram, weather, reviews (read-only), tasks | Sandra (Marketing team) |
+| `member_relations` | Reviews, member businesses (read-only), tasks | Thomas (Member Relations) |
+| `admin` | All tools including member business write operations | Full access |
 | `readonly` | Information only | View-only access |
+
+Write operations (e.g. creating/editing member businesses) are enforced by filtering the corresponding `agents` DB entries out of the system prompt for non-admin roles — not by instruction-based restrictions. This prevents the LLM from bypassing access controls.
 
 Roles are managed in the `dmo_users` table (keyed by OpenWebUI email).
 
