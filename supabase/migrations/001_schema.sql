@@ -1211,3 +1211,66 @@ GRANT ALL ON TABLE public.scheduled_posts TO anon, authenticated, service_role;
 GRANT ALL ON SEQUENCE public.scheduled_posts_id_seq TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.notifications TO anon, authenticated, service_role;
 GRANT ALL ON SEQUENCE public.notifications_id_seq TO anon, authenticated, service_role;
+
+-- ── Projects (persistent project memory) ──────────────────
+CREATE TABLE IF NOT EXISTS public.projects (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed')),
+    content TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects (status);
+CREATE INDEX IF NOT EXISTS idx_projects_updated ON public.projects (updated_at DESC);
+
+GRANT ALL ON TABLE public.projects TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.projects_id_seq TO anon, authenticated, service_role;
+
+-- ── Reminders ──────────────────
+CREATE TABLE IF NOT EXISTS public.reminders (
+    id SERIAL PRIMARY KEY,
+    user_id text NOT NULL,
+    chat_id text NOT NULL,
+    message text NOT NULL,
+    remind_at timestamp with time zone NOT NULL,
+    reminded_at timestamp with time zone,
+    type text NOT NULL DEFAULT 'reminder',
+    created_at timestamp with time zone DEFAULT now()
+);
+
+ALTER TABLE public.reminders DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_reminders_pending ON public.reminders (remind_at) WHERE reminded_at IS NULL;
+
+GRANT ALL ON TABLE public.reminders TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.reminders_id_seq TO anon, authenticated, service_role;
+
+-- ── Scheduled Actions (recurring agent tasks) ──────────────────
+CREATE TABLE IF NOT EXISTS public.scheduled_actions (
+    id SERIAL PRIMARY KEY,
+    user_id text NOT NULL,
+    chat_id text NOT NULL,
+    name text NOT NULL,
+    action_type text NOT NULL DEFAULT 'agent_task',
+    instruction text NOT NULL,
+    schedule jsonb NOT NULL,
+    timezone text DEFAULT 'Europe/Berlin',
+    enabled boolean DEFAULT true,
+    last_run timestamp with time zone,
+    next_run timestamp with time zone,
+    run_count integer DEFAULT 0,
+    max_runs integer,
+    notify_mode text NOT NULL DEFAULT 'always',
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+ALTER TABLE public.scheduled_actions DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_scheduled_actions_due ON public.scheduled_actions (next_run) WHERE enabled = true;
+CREATE INDEX IF NOT EXISTS idx_scheduled_actions_user ON public.scheduled_actions (user_id);
+
+GRANT ALL ON TABLE public.scheduled_actions TO anon, authenticated, service_role;
+GRANT ALL ON SEQUENCE public.scheduled_actions_id_seq TO anon, authenticated, service_role;

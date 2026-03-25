@@ -1,0 +1,265 @@
+{
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "name": "⏰ Reminder Runner",
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Check Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reminders": {
+      "main": [
+        [
+          {
+            "node": "Has Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Reminders": {
+      "main": [
+        [
+          {
+            "node": "Switch Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Type": {
+      "main": [
+        [
+          {
+            "node": "Write Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Notification": {
+      "main": [
+        [
+          {
+            "node": "Mark Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Agent": {
+      "main": [
+        [
+          {
+            "node": "Mark Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "sched-01"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fetch all pending reminders that are due\nconst now = new Date().toISOString();\nconst reminders = await helpers.httpRequest({\n  method: 'GET',\n  url: `{{SUPABASE_URL}}/rest/v1/reminders?reminded_at=is.null&remind_at=lte.${now}&order=remind_at.asc`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json'\n  },\n  json: true\n});\n\nif (!reminders || reminders.length === 0) {\n  return [];\n}\n\n// Return each reminder as a separate item for looping\nreturn reminders.map(r => ({ json: r }));"
+      },
+      "name": "Check Reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "check-01"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-reminders",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Has Reminders",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "if-01"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "task",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reminder"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "task",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "task"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false
+        }
+      },
+      "name": "Switch Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "switch-01"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write reminder to notifications table instead of Telegram\nconst reminder = $json;\n\n// Extract email from user_id (format: oi:email@example.com)\nconst email = reminder.user_id.startsWith('oi:') ? reminder.user_id.slice(3) : 'all';\n\nawait helpers.httpRequest({\n  method: 'POST',\n  url: '{{SUPABASE_URL}}/rest/v1/notifications',\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: {\n    recipient_email: email,\n    type: 'reminder',\n    title: '⏰ Erinnerung',\n    body: reminder.message,\n    source_workflow: 'reminder-runner'\n  },\n  json: true\n});\n\nreturn [{ json: { id: reminder.id, notified: true } }];"
+      },
+      "name": "Write Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -120
+      ],
+      "id": "notify-01"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_AGENT_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "inputData": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message": "={{ $json.message }}",
+            "chat_id": "={{ $json.chat_id }}",
+            "user_id": "={{ $json.user_id }}",
+            "source": "scheduled_task"
+          }
+        }
+      },
+      "name": "Execute Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        120
+      ],
+      "id": "exec-agent-01"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mark reminder as sent\nconst id = $('Has Reminders').item.json.id;\nawait helpers.httpRequest({\n  method: 'PATCH',\n  url: `{{SUPABASE_URL}}/rest/v1/reminders?id=eq.${id}`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json'\n  },\n  body: { reminded_at: new Date().toISOString() },\n  json: true\n});\n\nreturn [{ json: { id, marked: true } }];"
+      },
+      "name": "Mark Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "mark-01"
+    }
+  ]
+}

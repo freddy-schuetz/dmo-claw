@@ -367,10 +367,10 @@
     },
     {
       "parameters": {
-        "description": "Set a timed reminder. Use when user says 'remind me at...', 'remind me in X minutes/hours'. Input: time as ISO 8601 (e.g. 2026-03-01T10:00:00+01:00) and message text.",
+        "description": "Set a timed reminder, scheduled task, or recurring action. Modes:\\n- Reminder (type='reminder'): writes a notification that the agent picks up in the next chat. Use for 'remind me at/in...'.\\n- Task (type='task'): the agent executes the instructions once at the given time and sends the result. Use for 'do X at Y o'clock'.\\n- Recurring (type='recurring'): creates a repeating scheduled action. Extra fields: name (label), instruction (what to do), schedule (object), action_type ('agent_task' or 'briefing', default 'agent_task'), notify_mode ('always' or 'on_change', default 'always'), timezone (default 'Europe/Berlin'). Schedule formats: {\"type\":\"interval\",\"minutes\":30} or {\"type\":\"daily\",\"time\":\"08:00\"} or {\"type\":\"weekly\",\"days\":[1,5],\"time\":\"09:00\"} (1=Mon..7=Sun). notify_mode: 'always' = always send result (use for briefings, reports). 'on_change' = only notify when something NEW is found (use for background monitoring).\\n- Management: action='list' (show all scheduled actions), action='enable'/'disable'/'delete' with target_id (ID of the action to manage).\\nInput for reminder/task: time (ISO 8601), message (text), type. Input for recurring: see above. Input for management: action, target_id.",
         "workflowId": {
           "__rl": true,
-          "value": "tTAmOZjnSb0LhXvb",
+          "value": "REPLACE_REMINDER_FACTORY_ID",
           "mode": "id"
         },
         "workflowInputs": {
@@ -495,6 +495,88 @@
       "typeVersion": 2.2,
       "position": [
         3200,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "name": "expert_agent",
+        "description": "Delegate a task to a specialized expert agent. The expert works independently with its own AI model and tools, then returns a structured result. You should rephrase the result in your own tone before replying to the user.\n\nParameters (JSON):\n- agent: Expert agent identifier (e.g. \"research-expert\", \"content-creator\", \"data-analyst\")\n- task: Detailed task description — be specific about what you need\n- context: Relevant conversation context the expert should know (optional)\n\nExamples:\n{\"agent\":\"research-expert\",\"task\":\"Recherchiere die besten Wanderwege in Tirol mit Schwierigkeitsgrad und Länge\",\"context\":\"User plant einen Wanderurlaub im Sommer\"}\n{\"agent\":\"content-creator\",\"task\":\"Erstelle einen Instagram-Post über unser neues Produkt\",\"context\":\"Produkt: AI-gestützter Kalender, Zielgruppe: junge Berufstätige\"}\n{\"agent\":\"data-analyst\",\"task\":\"Analysiere diese Verkaufszahlen und erstelle einen Report\",\"context\":\"Q1 2026: Jan 45k, Feb 52k, Mär 61k\"}",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SUB_AGENT_RUNNER_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "tool-expert-agent",
+      "name": "Expert Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        3328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "name": "agent_library",
+        "description": "Manage the expert agent library. Install, list, or remove specialized expert agents from the catalog.\n\nActions:\n- list_agents: Show all available agents from the catalog (with installed status).\n- install_agent: Install an agent by ID. Downloads persona from catalog and saves to database.\n- remove_agent: Remove an installed agent by ID.\n- list_installed: Show only currently installed agents.\n\nInput: JSON with action and parameters.\nExamples:\n{\"action\":\"list_agents\"}\n{\"action\":\"install_agent\",\"id\":\"research-expert\"}\n{\"action\":\"remove_agent\",\"id\":\"research-expert\"}\n{\"action\":\"list_installed\"}",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_AGENT_LIBRARY_MANAGER_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "tool-agent-library",
+      "name": "Agent Library",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        3456,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Read a webpage and return its content as clean markdown. Input: URL string or JSON with url field. Use this instead of HTTP Tool when you need to read webpage content (articles, docs, blog posts). Returns clean text without HTML boilerplate.",
+        "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = { url: query }; }\nif (!input.url) return 'Fehler: url ist Pflicht';\ntry {\n  const resp = await helpers.httpRequest({\n    method: 'POST',\n    url: 'http://crawl4ai:11235/crawl',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ urls: [input.url], crawler_config: { type: 'CrawlerRunConfig', params: { stream: false, cache_mode: 'bypass' } } }),\n    timeout: 30000\n  });\n  const results = resp.results || resp;\n  const result = Array.isArray(results) ? results[0] : results;\n  if (!result.success) return 'Fehler: ' + (result.error_message || 'Crawl fehlgeschlagen');\n  const mdObj = result.markdown || {};\n  const md = typeof mdObj === 'string' ? mdObj : (mdObj.raw_markdown || '');\n  return md.substring(0, 8000);\n} catch(e) {\n  return 'Fehler beim Abrufen: ' + e.message;\n}"
+      },
+      "id": "tool-web-reader",
+      "name": "Web Reader",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Manage projects — persistent markdown documents for tracking ongoing work across conversations. Use this when a topic spans multiple sessions (e.g. building a presentation, planning an event, setting up a server).\n\nInput: JSON with action and fields:\n- list: Returns all projects with name, status, updated_at.\n- read: name (string). Returns the full markdown content.\n- create: name (string), content (string, markdown). Creates a new project.\n- update: name (string), content (string, markdown). Replaces the entire project content. Always read first, then send the complete updated document.\n- archive: name (string). Sets status to completed.\n\nExamples:\n{\"action\":\"list\"}\n{\"action\":\"create\",\"name\":\"KI Präsentation\",\"content\":\"## Ziel\\nPräsentation über KI im Tourismus\\n\\n## Gliederung\\n1. Einführung\\n2. Use Cases\"}\n{\"action\":\"read\",\"name\":\"KI Präsentation\"}\n{\"action\":\"update\",\"name\":\"KI Präsentation\",\"content\":\"## Ziel\\n...updated content...\"}\n{\"action\":\"archive\",\"name\":\"KI Präsentation\"}",
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\n\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|read|create|update|archive\", ...}'; }\n\nconst action = input.action;\n\nif (action === 'list') {\n  const projects = await pgrest('GET', '/rest/v1/projects?order=updated_at.desc&select=name,status,updated_at');\n  if (!projects || projects.length === 0) return JSON.stringify({ projects: [], message: 'No projects yet.' });\n  return JSON.stringify({ projects });\n\n} else if (action === 'read') {\n  if (!input.name) return 'Error: name is required';\n  const projects = await pgrest('GET', `/rest/v1/projects?name=eq.${encodeURIComponent(input.name)}&select=name,status,content,created_at,updated_at`);\n  if (!projects || projects.length === 0) return JSON.stringify({ error: 'Project not found: ' + input.name });\n  return JSON.stringify(projects[0]);\n\n} else if (action === 'create') {\n  if (!input.name) return 'Error: name is required';\n  const body = { name: input.name, content: input.content || '', status: 'active' };\n  const result = await pgrest('POST', '/rest/v1/projects', body, { 'Prefer': 'return=representation' });\n  if (result && result.code) return JSON.stringify({ error: result.message || 'Create failed' });\n  return JSON.stringify({ success: true, project: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.name) return 'Error: name is required';\n  if (input.content === undefined) return 'Error: content is required';\n  const body = { content: input.content, updated_at: new Date().toISOString() };\n  if (input.status) body.status = input.status;\n  const result = await pgrest('PATCH', `/rest/v1/projects?name=eq.${encodeURIComponent(input.name)}`, body, { 'Prefer': 'return=representation' });\n  if (!result || result.length === 0) return JSON.stringify({ error: 'Project not found: ' + input.name });\n  return JSON.stringify({ success: true, project: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'archive') {\n  if (!input.name) return 'Error: name is required';\n  const body = { status: 'completed', updated_at: new Date().toISOString() };\n  const result = await pgrest('PATCH', `/rest/v1/projects?name=eq.${encodeURIComponent(input.name)}`, body, { 'Prefer': 'return=representation' });\n  if (!result || result.length === 0) return JSON.stringify({ error: 'Project not found: ' + input.name });\n  return JSON.stringify({ success: true, archived: input.name });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, read, create, update, archive';\n}"
+      },
+      "id": "tool-project-manager",
+      "name": "Project Manager",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        3712,
         208
       ]
     }
@@ -766,6 +848,50 @@
       ]
     },
     "Library Manager": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expert Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Library": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Reader": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Manager": {
       "ai_tool": [
         [
           {
