@@ -590,7 +590,7 @@ for f in workflows/*.json; do
   [ -n "$POSTGRES_CRED_ID" ] && [ "$POSTGRES_CRED_ID" != "REPLACE_WITH_YOUR_CREDENTIAL_ID" ] && \
     sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Supabase Postgres\"|${POSTGRES_CRED_ID}\", \"name\": \"Supabase Postgres\"|g" "$out"
 done
-IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
+IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -739,6 +739,32 @@ print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'set
       -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
       -H "Content-Type: application/json" -d @- > /dev/null
     echo "  ✅ Reminder Runner → Agent: ${AGENT_WF_ID_FOR_RUNNER}"
+  fi
+fi
+
+# ── 11c. Patch Agent + Background Checker IDs in Heartbeat ──────────
+HEARTBEAT_WF_ID=${WF_IDS['heartbeat']}
+AGENT_WF_ID_FOR_HB=${WF_IDS['dmo-claw']}
+if [ -n "$HEARTBEAT_WF_ID" ] && [ -n "$AGENT_WF_ID_FOR_HB" ]; then
+  HB_JSON=$(curl -s "${N8N_BASE}/api/v1/workflows/${HEARTBEAT_WF_ID}" \
+    -H "X-N8N-API-KEY: ${N8N_API_KEY}")
+
+  PATCHED_HB=$(echo "$HB_JSON" | python3 -c "
+import sys, json
+raw = sys.stdin.read()
+raw = raw.replace('REPLACE_AGENT_WORKFLOW_ID', '${AGENT_WF_ID_FOR_HB}')
+raw = raw.replace('REPLACE_BACKGROUND_CHECKER_ID', '${WF_IDS[background-checker]}')
+wf = json.loads(raw)
+nodes = wf.get('nodes') or wf.get('activeVersion',{}).get('nodes',[])
+conns = wf.get('connections') or wf.get('activeVersion',{}).get('connections',{})
+print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'settings': wf.get('settings',{})}))
+" 2>/dev/null)
+
+  if [ -n "$PATCHED_HB" ]; then
+    echo "$PATCHED_HB" | curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${HEARTBEAT_WF_ID}" \
+      -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+      -H "Content-Type: application/json" -d @- > /dev/null
+    echo "  ✅ Heartbeat → Agent: ${AGENT_WF_ID_FOR_HB}, BG Checker: ${WF_IDS[background-checker]}"
   fi
 fi
 

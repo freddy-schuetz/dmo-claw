@@ -1,5 +1,5 @@
 {
-  "name": "💓 Heartbeat",
+  "name": "\ud83d\udc93 Heartbeat",
   "settings": {
     "executionOrder": "v1"
   },
@@ -8,62 +8,126 @@
       "main": [
         [
           {
-            "node": "Load Context",
+            "node": "Load Due Actions",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Load Context": {
+    "Load Due Actions": {
       "main": [
         [
           {
-            "node": "Has Actionable Items",
+            "node": "Has Actions",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has Actionable Items": {
+    "Has Actions": {
       "main": [
         [
           {
-            "node": "Call Claude Haiku",
+            "node": "Loop Over Actions",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Call Claude Haiku": {
+    "Loop Over Actions": {
       "main": [
+        [],
         [
           {
-            "node": "Should Send",
+            "node": "Route by Notify Mode",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Should Send": {
+    "Route by Notify Mode": {
       "main": [
         [
           {
-            "node": "Telegram Send",
+            "node": "Execute Background Checker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Agent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Telegram Send": {
+    "Execute Background Checker": {
       "main": [
         [
           {
-            "node": "Update Heartbeat",
+            "node": "Handle Checker Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Checker Response": {
+      "main": [
+        [
+          {
+            "node": "Should Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Notify": {
+      "main": [
+        [
+          {
+            "node": "Write Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Agent": {
+      "main": [
+        [
+          {
+            "node": "Update Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Action": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Actions",
             "type": "main",
             "index": 0
           }
@@ -92,10 +156,10 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Load tasks, user preferences, heartbeat state, and recent memories\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst CHAT_ID = '{{TELEGRAM_CHAT_ID}}';\nconst http = this.helpers.httpRequest;\n\nasync function pgrest(path) {\n  const res = await http({\n    method: 'GET',\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  });\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nconst userId = `telegram:${CHAT_ID}`;\n\n// Load all context in parallel\nconst [tasks, profiles, heartbeatCfg, briefingCfg, recentMemory, soul] = await Promise.all([\n  pgrest(`/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&order=due_date.asc.nullslast,priority.desc`),\n  pgrest(`/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=display_name,timezone,preferences`),\n  pgrest('/rest/v1/heartbeat_config?check_name=eq.heartbeat&select=config,last_run,enabled'),\n  pgrest('/rest/v1/heartbeat_config?check_name=eq.morning_briefing&select=config,last_run,enabled'),\n  pgrest('/rest/v1/memory_long?order=created_at.desc&limit=3&select=content,category'),\n  pgrest('/rest/v1/soul?key=eq.name&select=content')\n]);\n\nconst profile = (Array.isArray(profiles) && profiles.length > 0) ? profiles[0] : {};\nconst prefs = profile.preferences || {};\nconst tz = profile.timezone || 'Europe/Berlin';\nconst botName = (Array.isArray(soul) && soul.length > 0) ? soul[0].content : 'Assistant';\n\n// Current time in user's timezone\nconst now = new Date();\nconst userTime = new Date(now.toLocaleString('en-US', { timeZone: tz }));\nconst currentHour = userTime.getHours();\nconst currentMinute = userTime.getMinutes();\n\n// Heartbeat state\nconst hbEnabled = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0) ? heartbeatCfg[0].enabled : false;\nconst hbLastRun = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0 && heartbeatCfg[0].last_run) ? new Date(heartbeatCfg[0].last_run) : null;\nconst hbMinInterval = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0 && heartbeatCfg[0].config) ? (heartbeatCfg[0].config.min_interval_hours || 2) : 2;\n\n// Morning briefing state\nconst mbEnabled = (Array.isArray(briefingCfg) && briefingCfg.length > 0) ? briefingCfg[0].enabled : false;\nconst mbLastRun = (Array.isArray(briefingCfg) && briefingCfg.length > 0 && briefingCfg[0].last_run) ? new Date(briefingCfg[0].last_run) : null;\nconst mbPrefs = prefs.morning_briefing || {};\nconst mbTime = mbPrefs.time || '08:00';\nconst [mbHour, mbMinute] = mbTime.split(':').map(Number);\n\n// Categorize tasks\nconst overdue = (Array.isArray(tasks) ? tasks : []).filter(t => t.due_date && new Date(t.due_date) < now);\nconst dueToday = (Array.isArray(tasks) ? tasks : []).filter(t => {\n  if (!t.due_date) return false;\n  const d = new Date(t.due_date);\n  return d.toDateString() === userTime.toDateString() && d >= now;\n});\nconst urgent = (Array.isArray(tasks) ? tasks : []).filter(t => t.priority === 'urgent');\n\n// Check if morning briefing should fire\nlet shouldBrief = false;\nlet briefingReason = '';\nif (mbEnabled && mbPrefs.enabled) {\n  const timeDiff = (currentHour * 60 + currentMinute) - (mbHour * 60 + mbMinute);\n  const isInWindow = timeDiff >= 0 && timeDiff < 15;\n  const alreadyBriefedToday = mbLastRun && mbLastRun.toDateString() === userTime.toDateString();\n  const mbHoursSinceLastRun = mbLastRun ? (now.getTime() - mbLastRun.getTime()) / (1000 * 60 * 60) : 999;\n  if (isInWindow && !alreadyBriefedToday && mbHoursSinceLastRun >= 1) {\n    shouldBrief = true;\n    briefingReason = 'morning_briefing';\n  }\n}\n\n// Check if proactive message should fire (rate-limited)\nlet shouldProactive = false;\nif (hbEnabled && !shouldBrief) {\n  const hoursSinceLastRun = hbLastRun ? (now.getTime() - hbLastRun.getTime()) / (1000 * 60 * 60) : 999;\n  if (hoursSinceLastRun >= hbMinInterval) {\n    if (overdue.length > 0 || urgent.length > 0) {\n      shouldProactive = true;\n    }\n  }\n}\n\nreturn [{ json: {\n  hasAction: shouldBrief || shouldProactive,\n  reason: shouldBrief ? briefingReason : (shouldProactive ? 'proactive' : 'none'),\n  botName,\n  userName: profile.display_name || 'User',\n  timezone: tz,\n  currentTime: userTime.toISOString(),\n  tasks: Array.isArray(tasks) ? tasks : [],\n  overdue: overdue.map(t => ({ id: t.id, title: t.title, priority: t.priority, due_date: t.due_date })),\n  dueToday: dueToday.map(t => ({ id: t.id, title: t.title, priority: t.priority, due_date: t.due_date })),\n  urgent: urgent.map(t => ({ id: t.id, title: t.title, due_date: t.due_date })),\n  totalPending: Array.isArray(tasks) ? tasks.length : 0,\n  recentMemory: Array.isArray(recentMemory) ? recentMemory.map(m => m.content) : [],\n  isMorningBriefing: shouldBrief,\n  language: prefs.language || 'English'\n}}];"
+        "jsCode": "// Load due scheduled actions + proactive reminder check\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\nasync function pgrest(path) {\n  const res = await http({\n    method: 'GET',\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  });\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nconst now = new Date();\nconst nowISO = now.toISOString();\n\n// Load all context in parallel\nconst [dueActions, tasks, heartbeatCfg, mcpServers] = await Promise.all([\n  pgrest(`/rest/v1/scheduled_actions?enabled=eq.true&next_run=lte.${nowISO}&order=next_run.asc`),\n  pgrest(`/rest/v1/tasks?status=in.(pending,in_progress)&order=due_date.asc.nullslast,priority.desc&limit=20`),\n  pgrest('/rest/v1/heartbeat_config?check_name=eq.heartbeat&select=config,last_run,enabled'),\n  pgrest('/rest/v1/mcp_registry?active=eq.true&select=server_name,mcp_url,description,tools')\n]);\n\nconst lang = 'German';\n\n// Build MCP skills text for background checker\nlet mcpSkillsText = '';\nif (Array.isArray(mcpServers) && mcpServers.length > 0) {\n  mcpSkillsText = mcpServers.map(s => {\n    const tools = Array.isArray(s.tools) ? s.tools.join(', ') : '';\n    return `- ${s.server_name}: ${s.mcp_url} (tools: ${tools}) — ${s.description || ''}`;\n  }).join('\\n');\n}\n\n// Build result items from due scheduled actions\nconst items = [];\n\nif (Array.isArray(dueActions)) {\n  for (const action of dueActions) {\n    items.push({\n      json: {\n        type: 'scheduled_action',\n        actionId: action.id,\n        message: action.instruction,\n        chat_id: action.chat_id,\n        user_id: action.user_id,\n        source: 'scheduled_action',\n        schedule: action.schedule,\n        timezone: action.timezone || 'Europe/Berlin',\n        run_count: action.run_count || 0,\n        max_runs: action.max_runs,\n        name: action.name,\n        notify_mode: action.notify_mode || 'always',\n        last_run: action.last_run || null,\n        mcp_skills: mcpSkillsText,\n        language: lang\n      }\n    });\n  }\n}\n\n// Proactive reminder check\nconst hbEnabled = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0) ? heartbeatCfg[0].enabled : false;\nconst hbLastRun = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0 && heartbeatCfg[0].last_run) ? new Date(heartbeatCfg[0].last_run) : null;\nconst hbMinInterval = (Array.isArray(heartbeatCfg) && heartbeatCfg.length > 0 && heartbeatCfg[0].config) ? (heartbeatCfg[0].config.min_interval_hours || 2) : 2;\n\nif (hbEnabled) {\n  const hoursSinceLastRun = hbLastRun ? (now.getTime() - hbLastRun.getTime()) / (1000 * 60 * 60) : 999;\n  if (hoursSinceLastRun >= hbMinInterval) {\n    const taskList = Array.isArray(tasks) ? tasks : [];\n    const overdue = taskList.filter(t => t.due_date && new Date(t.due_date) < now);\n    const urgent = taskList.filter(t => t.priority === 'urgent');\n\n    if (overdue.length > 0 || urgent.length > 0) {\n      let instruction = `You are proactively checking in. Respond in ${lang}. Send a brief, helpful reminder (1-3 sentences) about these items:\\n`;\n      if (overdue.length > 0) {\n        instruction += `\\nOverdue tasks:\\n${overdue.map(t => `- ${t.title} (due: ${t.due_date}, priority: ${t.priority})`).join('\\n')}`;\n      }\n      if (urgent.length > 0) {\n        instruction += `\\nUrgent tasks:\\n${urgent.map(t => `- ${t.title}`).join('\\n')}`;\n      }\n      instruction += `\\n\\nBe helpful, not annoying. If nothing seems worth messaging about, just skip this.`;\n\n      items.push({\n        json: {\n          type: 'proactive_reminder',\n          actionId: null,\n          message: instruction,\n          chat_id: 'all',\n          user_id: 'system',\n          source: 'scheduled_action',\n          notify_mode: 'always'\n        }\n      });\n    }\n  }\n}\n\nif (items.length === 0) {\n  return [{ json: { type: 'no_action' } }];\n}\n\nreturn items;"
       },
-      "id": "load-context",
-      "name": "Load Context",
+      "id": "load-due-actions",
+      "name": "Load Due Actions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [220, 0]
@@ -106,52 +170,13 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose"
           },
           "conditions": [
             {
-              "id": "has-action",
-              "leftValue": "={{ $json.hasAction }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "if-has-action",
-      "name": "Has Actionable Items",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [440, 0]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "// Call Claude Haiku to compose a proactive message (or SKIP)\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\n// Get Anthropic API key from DB\nconst cfgResp = await http({\n  method: 'GET',\n  url: `${SUPABASE_URL}/rest/v1/tools_config?tool_name=eq.anthropic&select=config`,\n  headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' }\n});\nconst apiKey = (Array.isArray(cfgResp) && cfgResp.length > 0) ? cfgResp[0].config.api_key : null;\nif (!apiKey) return [{ json: { message: 'SKIP', error: 'No Anthropic API key configured' } }];\n\nconst ctx = $input.first().json;\n\nlet systemPrompt;\nconst lang = ctx.language || 'English';\nif (ctx.isMorningBriefing) {\n  systemPrompt = `You are ${ctx.botName}, a personal assistant. Compose a morning briefing for ${ctx.userName}. Include: a friendly greeting, today's tasks (if any), overdue tasks (if any), and a motivating note. Keep it SHORT (3-5 sentences). Use a natural, warm tone. Respond in ${lang}. Current time: ${ctx.currentTime} (${ctx.timezone}).`;\n} else {\n  systemPrompt = `You are ${ctx.botName}, a personal assistant. You are proactively checking in with ${ctx.userName}. There are overdue or urgent tasks that need attention. Compose a SHORT reminder (1-3 sentences). Be helpful, not annoying. If nothing seems worth messaging about, respond with exactly the word SKIP and nothing else. Respond in ${lang}. Current time: ${ctx.currentTime} (${ctx.timezone}).`;\n}\n\nlet userMsg = '';\nif (ctx.overdue.length > 0) userMsg += `Overdue tasks:\\n${ctx.overdue.map(t => `- ${t.title} (due: ${t.due_date}, priority: ${t.priority})`).join('\\n')}\\n\\n`;\nif (ctx.dueToday.length > 0) userMsg += `Due today:\\n${ctx.dueToday.map(t => `- ${t.title} (priority: ${t.priority})`).join('\\n')}\\n\\n`;\nif (ctx.urgent.length > 0) userMsg += `Urgent:\\n${ctx.urgent.map(t => `- ${t.title}`).join('\\n')}\\n\\n`;\nuserMsg += `Total pending tasks: ${ctx.totalPending}\\n`;\nif (ctx.recentMemory.length > 0) userMsg += `\\nRecent context:\\n${ctx.recentMemory.join('\\n')}`;\n\nconst response = await http({\n  method: 'POST',\n  url: 'https://api.anthropic.com/v1/messages',\n  headers: {\n    'x-api-key': apiKey,\n    'anthropic-version': '2023-06-01',\n    'content-type': 'application/json'\n  },\n  body: {\n    model: 'claude-haiku-4-5-20251001',\n    max_tokens: 512,\n    system: systemPrompt,\n    messages: [{ role: 'user', content: userMsg }]\n  }\n});\n\nconst message = (response.content && response.content[0]) ? response.content[0].text : 'SKIP';\nreturn [{ json: { message, reason: ctx.reason, isMorningBriefing: ctx.isMorningBriefing } }];"
-      },
-      "id": "call-haiku",
-      "name": "Call Claude Haiku",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [660, 0]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "not-skip",
-              "leftValue": "={{ $json.message }}",
-              "rightValue": "SKIP",
+              "id": "has-actions",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "no_action",
               "operator": {
                 "type": "string",
                 "operation": "notEquals"
@@ -161,42 +186,143 @@
           "combinator": "and"
         }
       },
-      "id": "if-should-send",
-      "name": "Should Send",
+      "id": "if-has-actions",
+      "name": "Has Actions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-actions",
+      "name": "Loop Over Actions",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-on-change",
+              "leftValue": "={{ $json.notify_mode }}",
+              "rightValue": "on_change",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "route-notify-mode",
+      "name": "Route by Notify Mode",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [880, 0]
     },
     {
       "parameters": {
-        "chatId": "{{TELEGRAM_CHAT_ID}}",
-        "text": "={{ $json.message }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_BACKGROUND_CHECKER_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
         }
       },
-      "id": "telegram-send",
-      "name": "Telegram Send",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [1100, 0],
-      "credentials": {
-        "telegramApi": {
-          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
-          "name": "Telegram Bot"
+      "id": "exec-bg-checker",
+      "name": "Execute Background Checker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1100, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge checker result with original action data for routing + update\nconst checkerResult = $input.first().json;\nconst actionData = $('Route by Notify Mode').first().json;\n\nreturn [{\n  json: {\n    ...actionData,\n    notify: checkerResult.notify || false,\n    checkerMessage: checkerResult.message || ''\n  }\n}];"
+      },
+      "id": "handle-checker-response",
+      "name": "Handle Checker Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, -120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "should-notify",
+              "leftValue": "={{ $json.notify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
         }
-      }
+      },
+      "id": "if-should-notify",
+      "name": "Should Notify",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write background checker result to notifications table\nconst item = $json;\n\n// Extract email from user_id (format: oi:email@example.com)\nconst email = (item.user_id && item.user_id.startsWith('oi:')) ? item.user_id.slice(3) : 'all';\n\nawait helpers.httpRequest({\n  method: 'POST',\n  url: '{{SUPABASE_URL}}/rest/v1/notifications',\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: {\n    recipient_email: email,\n    type: 'info',\n    title: item.name || 'Hintergrund-Check',\n    body: item.checkerMessage,\n    source_workflow: 'heartbeat'\n  },\n  json: true\n});\n\nreturn [{ json: { notified: true } }];"
+      },
+      "id": "write-notification",
+      "name": "Write Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_AGENT_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "exec-agent",
+      "name": "Execute Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1100, 120]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Update heartbeat_config last_run\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\nconst reason = $('Call Claude Haiku').first().json.reason || 'proactive';\nconst checkName = reason === 'morning_briefing' ? 'morning_briefing' : 'heartbeat';\n\nawait http({\n  method: 'PATCH',\n  url: `${SUPABASE_URL}/rest/v1/heartbeat_config?check_name=eq.${checkName}`,\n  headers: {\n    'apikey': SUPABASE_KEY,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: { last_run: new Date().toISOString() }\n});\n\nreturn [{ json: { status: 'sent', check_name: checkName, timestamp: new Date().toISOString() } }];"
+        "jsCode": "// Update scheduled action: last_run, run_count, next_run\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst http = this.helpers.httpRequest;\n\nconst item = $input.first().json;\nconst now = new Date();\n\n// Proactive reminder: update heartbeat_config instead\nif (item.type === 'proactive_reminder') {\n  await http({\n    method: 'PATCH',\n    url: `${SUPABASE_URL}/rest/v1/heartbeat_config?check_name=eq.heartbeat`,\n    headers: {\n      'apikey': SUPABASE_KEY,\n      'Content-Type': 'application/json',\n      'Prefer': 'return=minimal'\n    },\n    body: { last_run: now.toISOString() }\n  });\n  return [{ json: { status: 'updated', type: 'proactive_reminder' } }];\n}\n\n// Scheduled action: compute next_run and update\nconst actionId = item.actionId;\nconst schedule = item.schedule;\nconst tz = item.timezone || 'Europe/Berlin';\nconst runCount = (item.run_count || 0) + 1;\nconst maxRuns = item.max_runs;\n\nfunction computeNextRun(schedule, tz) {\n  const now = new Date();\n\n  if (schedule.type === 'interval') {\n    return new Date(now.getTime() + (schedule.minutes || 60) * 60000 - 30000).toISOString();\n  }\n\n  if (schedule.type === 'daily') {\n    const [h, m] = (schedule.time || '08:00').split(':').map(Number);\n    const userNow = new Date(now.toLocaleString('en-US', { timeZone: tz }));\n    const target = new Date(userNow);\n    target.setHours(h, m, 0, 0);\n    if (target <= userNow) {\n      target.setDate(target.getDate() + 1);\n    }\n    const diffMs = target.getTime() - userNow.getTime();\n    return new Date(now.getTime() + diffMs).toISOString();\n  }\n\n  if (schedule.type === 'weekly') {\n    const [h, m] = (schedule.time || '09:00').split(':').map(Number);\n    const days = schedule.days || [1];\n    const userNow = new Date(now.toLocaleString('en-US', { timeZone: tz }));\n    const jsDay = userNow.getDay();\n    const currentDay = jsDay === 0 ? 7 : jsDay;\n    const currentMinutes = userNow.getHours() * 60 + userNow.getMinutes();\n    const targetMinutes = h * 60 + m;\n\n    let minDaysAhead = 8;\n    for (const d of days) {\n      let ahead = d - currentDay;\n      if (ahead < 0) ahead += 7;\n      if (ahead === 0 && currentMinutes >= targetMinutes) ahead = 7;\n      if (ahead < minDaysAhead) minDaysAhead = ahead;\n    }\n\n    const target = new Date(userNow);\n    target.setDate(target.getDate() + minDaysAhead);\n    target.setHours(h, m, 0, 0);\n    const diffMs = target.getTime() - userNow.getTime();\n    return new Date(now.getTime() + diffMs).toISOString();\n  }\n\n  return new Date(now.getTime() + 3600000).toISOString();\n}\n\nconst nextRun = computeNextRun(schedule, tz);\nconst shouldDisable = maxRuns !== null && maxRuns !== undefined && runCount >= maxRuns;\n\nawait http({\n  method: 'PATCH',\n  url: `${SUPABASE_URL}/rest/v1/scheduled_actions?id=eq.${actionId}`,\n  headers: {\n    'apikey': SUPABASE_KEY,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n  },\n  body: {\n    last_run: now.toISOString(),\n    run_count: runCount,\n    next_run: shouldDisable ? null : nextRun,\n    enabled: !shouldDisable,\n    updated_at: now.toISOString()\n  }\n});\n\nreturn [{ json: { status: 'updated', actionId, runCount, nextRun: shouldDisable ? null : nextRun, disabled: shouldDisable } }];"
       },
-      "id": "update-heartbeat",
-      "name": "Update Heartbeat",
+      "id": "update-action",
+      "name": "Update Action",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 0]
+      "position": [1980, 0]
     }
   ]
 }
