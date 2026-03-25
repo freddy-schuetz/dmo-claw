@@ -40,6 +40,45 @@
     },
     {
       "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "scheduled-task-trigger",
+      "name": "Scheduled Task Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst message = raw.message || '';\nconst userId = String(raw.user_id || 'system');\n// Extract email from oi: prefix\nconst userEmail = userId.startsWith('oi:') ? userId.slice(3) : userId;\nconst userName = 'System Task';\nconst source = raw.source || 'scheduled_task';\n\nreturn [{\n  json: {\n    userMessage: message,\n    userEmail,\n    userName,\n    source\n  }\n}];"
+      },
+      "id": "format-task-input",
+      "name": "Format Task Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: data }];"
+      },
+      "id": "merge-input",
+      "name": "Merge Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        140
+      ]
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
         "query": "SELECT key, content FROM soul ORDER BY key",
         "options": {
@@ -51,8 +90,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        448,
-        -16
+        672,
+        140
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -91,7 +130,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' LIMIT 1",
+        "query": "SELECT name, display_name, timezone, preferences, context, setup_done FROM user_profiles WHERE user_id = 'oi:{{ $('Merge Input').first().json.userEmail }}' LIMIT 1",
         "options": {
           "queryBatching": "independently"
         }
@@ -116,7 +155,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT role, name FROM dmo_users WHERE oi_email = '{{ $('Normalize Message').first().json.userEmail }}' AND active = true LIMIT 1",
+        "query": "SELECT role, name FROM dmo_users WHERE oi_email = '{{ $('Merge Input').first().json.userEmail }}' AND active = true LIMIT 1",
         "options": {
           "queryBatching": "independently"
         }
@@ -141,7 +180,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT role, content FROM conversations WHERE session_id = 'oi:{{ $('Normalize Message').first().json.userEmail }}' ORDER BY created_at DESC LIMIT 20",
+        "query": "SELECT role, content FROM conversations WHERE session_id = 'oi:{{ $('Merge Input').first().json.userEmail }}' ORDER BY created_at DESC LIMIT 20",
         "options": {
           "queryBatching": "independently"
         }
@@ -165,7 +204,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const soul = $('Load Soul').all().map(i => i.json);\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Normalize Message').first().json.userMessage || '';\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userName = $('Normalize Message').first().json.userName || 'Unknown';\n\nconst baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst dbHeaders = { 'apikey': serviceKey, 'Authorization': 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet notifications = [];\ntry {\n  notifications = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/rest/v1/notifications?read=eq.false&or=(recipient_email.eq.' + encodeURIComponent(userEmail) + ',recipient_email.eq.all)&order=created_at.desc&limit=10', headers: dbHeaders });\n  if (notifications && notifications.length > 0) {\n    const ids = notifications.map(n => n.id);\n    await helpers.httpRequest({ method: 'PATCH', url: baseUrl + '/rest/v1/notifications?id=in.(' + ids.join(',') + ')', headers: { ...dbHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ read: true }) });\n  }\n} catch(e) {}\n\nconst soulText = soul.map(s => '## ' + s.key + '\\n' + s.content).join('\\n\\n');\n\n// Filter agents by role: exclude write-only configs for non-admins\nconst adminOnlyKeys = ['member_management_write'];\nconst filteredAgents = agents.filter(a => {\n  if (adminOnlyKeys.includes(a.key) && role !== 'admin') return false;\n  return true;\n});\nconst agentText = filteredAgents.map(a => '## ' + a.key + '\\n' + a.content).join('\\n\\n');\n\nconst userText = user.display_name ? 'Name: ' + user.display_name + ' (' + user.name + ')\\nTimezone: ' + user.timezone + '\\nKontext: ' + user.context + '\\nPrefs: ' + JSON.stringify(user.preferences) + '\\nSetup done: ' + (user.setup_done !== false ? 'true' : 'false') : 'Unbekannter User';\n\nconst roleContextMap = { marketing: 'Rolle: Marketing (' + roleName + ')\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.', member_relations: 'Rolle: Mitgliederbetreuung (' + roleName + ')\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.', admin: 'Rolle: Admin (' + roleName + ')\\nVollzugriff auf alle Tools und Funktionen.', readonly: 'Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausfuehren.' };\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\nconst historyText = history.reverse().map(h => h.role + ': ' + h.content).join('\\n');\n\nlet notifText = '';\nif (notifications && notifications.length > 0) {\n  notifText = '\\n\\n# UNGELESENE BENACHRICHTIGUNGEN\\nWICHTIG: Erwaehne diese Benachrichtigungen proaktiv am Anfang deiner Antwort!\\n';\n  for (const n of notifications) { notifText += '- [' + n.type + '] ' + n.title + ': ' + (n.body || '') + '\\n'; }\n}\n\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = '# CURRENT TIME\\n' + now + '\\n\\n# SOUL\\n' + soulText + '\\n\\n# AGENT CONFIG\\n' + agentText + '\\n\\n# USER ROLE\\n' + roleContext + '\\n\\n# USER PROFILE\\n' + userText + notifText + '\\n\\n# RECENT CONVERSATION\\n' + historyText;\n\nreturn [{ json: { systemPrompt, userMessage, userEmail, userName, userId: userEmail, sessionId: 'oi:' + userEmail } }];"
+        "jsCode": "const soul = $('Load Soul').all().map(i => i.json);\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Merge Input').first().json.userMessage || '';\nconst userEmail = $('Merge Input').first().json.userEmail || 'unknown';\nconst userName = $('Merge Input').first().json.userName || 'Unknown';\n\nconst baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst dbHeaders = { 'apikey': serviceKey, 'Authorization': 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet notifications = [];\ntry {\n  notifications = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/rest/v1/notifications?read=eq.false&or=(recipient_email.eq.' + encodeURIComponent(userEmail) + ',recipient_email.eq.all)&order=created_at.desc&limit=10', headers: dbHeaders });\n  if (notifications && notifications.length > 0) {\n    const ids = notifications.map(n => n.id);\n    await helpers.httpRequest({ method: 'PATCH', url: baseUrl + '/rest/v1/notifications?id=in.(' + ids.join(',') + ')', headers: { ...dbHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ read: true }) });\n  }\n} catch(e) {}\n\nconst soulText = soul.map(s => '## ' + s.key + '\\n' + s.content).join('\\n\\n');\n\n// Filter agents by role: exclude write-only configs for non-admins\nconst adminOnlyKeys = ['member_management_write'];\nconst filteredAgents = agents.filter(a => {\n  if (adminOnlyKeys.includes(a.key) && role !== 'admin') return false;\n  return true;\n});\nconst agentText = filteredAgents.map(a => '## ' + a.key + '\\n' + a.content).join('\\n\\n');\n\nconst userText = user.display_name ? 'Name: ' + user.display_name + ' (' + user.name + ')\\nTimezone: ' + user.timezone + '\\nKontext: ' + user.context + '\\nPrefs: ' + JSON.stringify(user.preferences) + '\\nSetup done: ' + (user.setup_done !== false ? 'true' : 'false') : 'Unbekannter User';\n\nconst roleContextMap = { marketing: 'Rolle: Marketing (' + roleName + ')\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.', member_relations: 'Rolle: Mitgliederbetreuung (' + roleName + ')\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.', admin: 'Rolle: Admin (' + roleName + ')\\nVollzugriff auf alle Tools und Funktionen.', readonly: 'Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausfuehren.' };\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\nconst historyText = history.reverse().map(h => h.role + ': ' + h.content).join('\\n');\n\nlet notifText = '';\nif (notifications && notifications.length > 0) {\n  notifText = '\\n\\n# UNGELESENE BENACHRICHTIGUNGEN\\nWICHTIG: Erwaehne diese Benachrichtigungen proaktiv am Anfang deiner Antwort!\\n';\n  for (const n of notifications) { notifText += '- [' + n.type + '] ' + n.title + ': ' + (n.body || '') + '\\n'; }\n}\n\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = '# CURRENT TIME\\n' + now + '\\n\\n# SOUL\\n' + soulText + '\\n\\n# AGENT CONFIG\\n' + agentText + '\\n\\n# USER ROLE\\n' + roleContext + '\\n\\n# USER PROFILE\\n' + userText + notifText + '\\n\\n# RECENT CONVERSATION\\n' + historyText;\n\nreturn [{ json: { systemPrompt, userMessage, userEmail, userName, userId: userEmail, sessionId: 'oi:' + userEmail } }];"
       },
       "id": "build-prompt",
       "name": "Build System Prompt",
@@ -286,13 +325,44 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ output: $json.assistantMessage }) }}"
       },
+      "id": "route-response",
+      "name": "Route Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3432,
+        -16
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-webhook",
+              "leftValue": "={{ $('Merge Input').first().json.source }}",
+              "rightValue": "scheduled_task",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
       "id": "webhook-reply",
       "name": "Webhook Reply",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
         3632,
-        -16
+        -80
       ]
     },
     {
@@ -461,7 +531,7 @@
     {
       "parameters": {
         "description": "Manage tasks. Input: JSON with action and parameters.\n\nActions:\n- list: List tasks. Optional: status (pending/in_progress/done/cancelled), priority, due_before (ISO date)\n- create: Create task. Required: title. Optional: description, priority (low/medium/high/urgent), due_date (ISO 8601), parent_id (for subtasks), tags (array)\n- update: Update task. Required: id. Optional: title, description, status, priority, due_date, tags\n- delete: Delete task. Required: id\n- summary: Overview of all pending/in_progress tasks grouped by priority\n- set_preference: Save user preference. Required: key, value. Example: {\"action\":\"set_preference\",\"key\":\"morning_briefing\",\"value\":{\"enabled\":true,\"time\":\"08:00\"}}\n\nExamples:\n{\"action\":\"create\",\"title\":\"Call dentist\",\"due_date\":\"2026-03-10T10:00:00+01:00\",\"priority\":\"high\"}\n{\"action\":\"list\",\"status\":\"pending\"}\n{\"action\":\"update\",\"id\":5,\"status\":\"done\"}\n{\"action\":\"summary\"}",
-        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userEmail = $('Normalize Message').first().json.userEmail || 'unknown';\nconst userId = `oi:${userEmail}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"list|create|update|delete|summary|set_preference\", ...}'; }\n\nconst userEmail = $('Merge Input').first().json.userEmail || 'unknown';\nconst userId = `oi:${userEmail}`;\nconst action = input.action;\n\nif (action === 'list') {\n  let filter = `user_id=eq.${encodeURIComponent(userId)}`;\n  if (input.status) filter += `&status=eq.${input.status}`;\n  if (input.priority) filter += `&priority=eq.${input.priority}`;\n  if (input.due_before) filter += `&due_date=lte.${input.due_before}`;\n  filter += '&parent_id=is.null&order=due_date.asc.nullslast,priority.desc,created_at.desc';\n  const tasks = await pgrest('GET', `/rest/v1/tasks?${filter}&select=*`);\n  return JSON.stringify(tasks);\n\n} else if (action === 'create') {\n  if (!input.title) return 'Error: title is required';\n  const body = {\n    user_id: userId,\n    title: input.title,\n    description: input.description || null,\n    priority: input.priority || 'medium',\n    due_date: input.due_date || null,\n    parent_id: input.parent_id || null,\n    tags: input.tags || []\n  };\n  const result = await pgrest('POST', '/rest/v1/tasks', body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id is required';\n  const body = {};\n  if (input.title) body.title = input.title;\n  if (input.description !== undefined) body.description = input.description;\n  if (input.status) {\n    body.status = input.status;\n    if (input.status === 'done') body.completed_at = new Date().toISOString();\n  }\n  if (input.priority) body.priority = input.priority;\n  if (input.due_date !== undefined) body.due_date = input.due_date;\n  if (input.tags) body.tags = input.tags;\n  body.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`, body, { 'Prefer': 'return=representation' });\n  return JSON.stringify({ success: true, task: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id is required';\n  await pgrest('DELETE', `/rest/v1/tasks?id=eq.${input.id}&user_id=eq.${encodeURIComponent(userId)}`);\n  return JSON.stringify({ success: true, deleted: input.id });\n\n} else if (action === 'summary') {\n  const tasks = await pgrest('GET', `/rest/v1/tasks?user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&parent_id=is.null&order=priority.desc,due_date.asc.nullslast&select=*`);\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=timezone`);\n  const tz = (profiles && profiles[0] && profiles[0].timezone) || 'Europe/Berlin';\n  const now = new Date();\n  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz });\n  const overdue = tasks.filter(t => { if (!t.due_date) return false; const d = new Date(t.due_date); return d < now && d.toLocaleDateString('en-CA', { timeZone: tz }) !== todayStr; });\n  const dueToday = tasks.filter(t => { if (!t.due_date) return false; return new Date(t.due_date).toLocaleDateString('en-CA', { timeZone: tz }) === todayStr; });\n  return JSON.stringify({\n    total_pending: tasks.length, overdue: overdue.length, due_today: dueToday.length,\n    by_priority: { urgent: tasks.filter(t => t.priority === 'urgent').length, high: tasks.filter(t => t.priority === 'high').length, medium: tasks.filter(t => t.priority === 'medium').length, low: tasks.filter(t => t.priority === 'low').length },\n    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, due_date: t.due_date }))\n  });\n\n} else if (action === 'set_preference') {\n  if (!input.key || input.value === undefined) return 'Error: key and value required';\n  const profiles = await pgrest('GET', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferences`);\n  const current = (profiles[0] && profiles[0].preferences) || {};\n  current[input.key] = input.value;\n  await pgrest('PATCH', `/rest/v1/user_profiles?user_id=eq.${encodeURIComponent(userId)}`, { preferences: current, updated_at: new Date().toISOString() }, { 'Prefer': 'return=minimal' });\n  if (input.key === 'morning_briefing' && input.value.enabled !== undefined) {\n    await pgrest('PATCH', `/rest/v1/heartbeat_config?check_name=eq.morning_briefing`, { enabled: input.value.enabled }, { 'Prefer': 'return=minimal' });\n  }\n  return JSON.stringify({ success: true, preference: input.key, value: input.value });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: list, create, update, delete, summary, set_preference';\n}"
       },
       "id": "tool-task-manager",
       "name": "Task Manager",
@@ -594,6 +664,39 @@
       ]
     },
     "Normalize Message": {
+      "main": [
+        [
+          {
+            "node": "Merge Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scheduled Task Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Task Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Task Input": {
+      "main": [
+        [
+          {
+            "node": "Merge Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Input": {
       "main": [
         [
           {
@@ -735,6 +838,17 @@
         ]
       ]
     },
+    "Route Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "HTTP Tool": {
       "ai_tool": [
         [
@@ -782,7 +896,7 @@
             "index": 0
           },
           {
-            "node": "Webhook Reply",
+            "node": "Route Response",
             "type": "main",
             "index": 0
           }
