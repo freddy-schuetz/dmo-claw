@@ -1,0 +1,14 @@
+{
+  "name": "dmo-claw-email-bridge",
+  "version": "1.0.0",
+  "description": "Stateless REST bridge for IMAP/SMTP email operations",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "imapflow": "^1.0.171",
+    "nodemailer": "^6.9.16"
+  }
+}

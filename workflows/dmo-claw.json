@@ -204,14 +204,39 @@
     },
     {
       "parameters": {
-        "jsCode": "const soul = $('Load Soul').all().map(i => i.json);\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Merge Input').first().json.userMessage || '';\nconst userEmail = $('Merge Input').first().json.userEmail || 'unknown';\nconst userName = $('Merge Input').first().json.userName || 'Unknown';\n\nconst baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst dbHeaders = { 'apikey': serviceKey, 'Authorization': 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet notifications = [];\ntry {\n  notifications = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/rest/v1/notifications?read=eq.false&or=(recipient_email.eq.' + encodeURIComponent(userEmail) + ',recipient_email.eq.all)&order=created_at.desc&limit=10', headers: dbHeaders });\n  if (notifications && notifications.length > 0) {\n    const ids = notifications.map(n => n.id);\n    await helpers.httpRequest({ method: 'PATCH', url: baseUrl + '/rest/v1/notifications?id=in.(' + ids.join(',') + ')', headers: { ...dbHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ read: true }) });\n  }\n} catch(e) {}\n\nconst soulText = soul.map(s => '## ' + s.key + '\\n' + s.content).join('\\n\\n');\n\n// Filter agents by role: exclude write-only configs for non-admins\nconst adminOnlyKeys = ['member_management_write'];\nconst filteredAgents = agents.filter(a => {\n  if (adminOnlyKeys.includes(a.key) && role !== 'admin') return false;\n  return true;\n});\nconst agentText = filteredAgents.map(a => '## ' + a.key + '\\n' + a.content).join('\\n\\n');\n\nconst userText = user.display_name ? 'Name: ' + user.display_name + ' (' + user.name + ')\\nTimezone: ' + user.timezone + '\\nKontext: ' + user.context + '\\nPrefs: ' + JSON.stringify(user.preferences) + '\\nSetup done: ' + (user.setup_done !== false ? 'true' : 'false') : 'Unbekannter User';\n\nconst roleContextMap = { marketing: 'Rolle: Marketing (' + roleName + ')\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.', member_relations: 'Rolle: Mitgliederbetreuung (' + roleName + ')\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.', admin: 'Rolle: Admin (' + roleName + ')\\nVollzugriff auf alle Tools und Funktionen.', readonly: 'Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausfuehren.' };\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\nconst historyText = history.reverse().map(h => h.role + ': ' + h.content).join('\\n');\n\nlet notifText = '';\nif (notifications && notifications.length > 0) {\n  notifText = '\\n\\n# UNGELESENE BENACHRICHTIGUNGEN\\nWICHTIG: Erwaehne diese Benachrichtigungen proaktiv am Anfang deiner Antwort!\\n';\n  for (const n of notifications) { notifText += '- [' + n.type + '] ' + n.title + ': ' + (n.body || '') + '\\n'; }\n}\n\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = '# CURRENT TIME\\n' + now + '\\n\\n# SOUL\\n' + soulText + '\\n\\n# AGENT CONFIG\\n' + agentText + '\\n\\n# USER ROLE\\n' + roleContext + '\\n\\n# USER PROFILE\\n' + userText + notifText + '\\n\\n# RECENT CONVERSATION\\n' + historyText;\n\nreturn [{ json: { systemPrompt, userMessage, userEmail, userName, userId: userEmail, sessionId: 'oi:' + userEmail } }];"
+        "operation": "executeQuery",
+        "query": "SELECT server_name, mcp_url, description, tools FROM mcp_registry WHERE active = true ORDER BY server_name",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "load-mcp-servers",
+      "name": "Load MCP Servers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1456,
+        -16
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const soul = $('Load Soul').all().map(i => i.json);\nconst agentsRaw = $('Load Agents Config').all().map(i => i.json);\nconst agents = [...new Map(agentsRaw.map(a => [a.key, a])).values()];\nconst user = $('Load User Profile').first()?.json || {};\nconst userRole = $('Load User Role').first()?.json || {};\nconst role = userRole.role || 'readonly';\nconst roleName = userRole.name || '';\nconst historyRaw = $('Load Conversation History').all().map(i => i.json);\nconst seenHist = new Set();\nconst history = historyRaw.filter(h => { const k = h.role + ':' + h.content; if (seenHist.has(k)) return false; seenHist.add(k); return true; });\nconst userMessage = $('Merge Input').first().json.userMessage || '';\nconst userEmail = $('Merge Input').first().json.userEmail || 'unknown';\nconst userName = $('Merge Input').first().json.userName || 'Unknown';\n\nconst baseUrl = '{{SUPABASE_URL}}';\nconst serviceKey = '{{SUPABASE_SERVICE_KEY}}';\nconst dbHeaders = { 'apikey': serviceKey, 'Authorization': 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet notifications = [];\ntry {\n  notifications = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/rest/v1/notifications?read=eq.false&or=(recipient_email.eq.' + encodeURIComponent(userEmail) + ',recipient_email.eq.all)&order=created_at.desc&limit=10', headers: dbHeaders });\n  if (notifications && notifications.length > 0) {\n    const ids = notifications.map(n => n.id);\n    await helpers.httpRequest({ method: 'PATCH', url: baseUrl + '/rest/v1/notifications?id=in.(' + ids.join(',') + ')', headers: { ...dbHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ read: true }) });\n  }\n} catch(e) {}\n\nconst soulText = soul.map(s => '## ' + s.key + '\\n' + s.content).join('\\n\\n');\n\n// Filter agents by role: exclude write-only configs for non-admins\nconst adminOnlyKeys = ['member_management_write'];\nconst filteredAgents = agents.filter(a => {\n  if (adminOnlyKeys.includes(a.key) && role !== 'admin') return false;\n  return true;\n});\n// Build dynamic MCP server list\nconst mcpRaw = $('Load MCP Servers').all().map(i => i.json);\nconst seenMcp = new Set();\nconst mcpServers = mcpRaw.filter(s => { if (!s.server_name || seenMcp.has(s.server_name)) return false; seenMcp.add(s.server_name); return true; });\nlet mcpServerList = '';\nif (mcpServers.length > 0) {\n  mcpServerList = '\\n\\n## Available MCP Skills:\\n' + mcpServers.map(s => {\n    const tools = Array.isArray(s.tools) ? s.tools.join(', ') : s.tools;\n    return '- ' + s.server_name + ': ' + s.mcp_url + ' (tools: ' + tools + ')' + (s.description ? ' — ' + s.description : '');\n  }).join('\\n');\n}\n\nconst agentText = filteredAgents.map(a => {\n  if (a.key === 'mcp_instructions') {\n    const cleaned = a.content.replace(/\\n## (?:Available MCP (?:Servers|Skills)|Currently installed MCP Skills)[\\s\\S]*?(?=\\n## |$)/, '');\n    return '## ' + a.key + '\\n' + cleaned + mcpServerList;\n  }\n  return '## ' + a.key + '\\n' + a.content;\n}).join('\\n\\n');\n\nconst userText = user.display_name ? 'Name: ' + user.display_name + ' (' + user.name + ')\\nTimezone: ' + user.timezone + '\\nKontext: ' + user.context + '\\nPrefs: ' + JSON.stringify(user.preferences) + '\\nSetup done: ' + (user.setup_done !== false ? 'true' : 'false') : 'Unbekannter User';\n\nconst roleContextMap = { marketing: 'Rolle: Marketing (' + roleName + ')\\nDu hilfst bei Social Media, Content-Erstellung und Posting.\\nBevorzugte Tools: create_instagram_post, schedule_post, alpine_weather\\nNutze Bewertungs-Tools nur wenn explizit danach gefragt wird.', member_relations: 'Rolle: Mitgliederbetreuung (' + roleName + ')\\nDu hilfst bei Bewertungen, Mitgliedsbetrieben und deren Anliegen.\\nBevorzugte Tools: query_reviews, review_summary, alpine_weather\\nNutze Posting-Tools nur wenn explizit danach gefragt wird.', admin: 'Rolle: Admin (' + roleName + ')\\nVollzugriff auf alle Tools und Funktionen.', readonly: 'Rolle: Lesezugriff\\nDu kannst Informationen abrufen, aber keine Aktionen ausfuehren.' };\nconst roleContext = roleContextMap[role] || roleContextMap.readonly;\n\nconst historyText = history.reverse().map(h => h.role + ': ' + h.content).join('\\n');\n\nlet notifText = '';\nif (notifications && notifications.length > 0) {\n  notifText = '\\n\\n# UNGELESENE BENACHRICHTIGUNGEN\\nWICHTIG: Erwaehne diese Benachrichtigungen proaktiv am Anfang deiner Antwort!\\n';\n  for (const n of notifications) { notifText += '- [' + n.type + '] ' + n.title + ': ' + (n.body || '') + '\\n'; }\n}\n\nconst now = $now.setZone(user.timezone || 'UTC').toFormat('cccc, dd LLLL yyyy, HH:mm');\n\nconst systemPrompt = '# CURRENT TIME\\n' + now + '\\n\\n# SOUL\\n' + soulText + '\\n\\n# AGENT CONFIG\\n' + agentText + '\\n\\n# USER ROLE\\n' + roleContext + '\\n\\n# USER PROFILE\\n' + userText + notifText + '\\n\\n# RECENT CONVERSATION\\n' + historyText;\n\nreturn [{ json: { systemPrompt, userMessage, userEmail, userName, userId: userEmail, sessionId: 'oi:' + userEmail } }];"
       },
       "id": "build-prompt",
       "name": "Build System Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
+        1680,
         -16
       ]
     },
@@ -764,7 +789,7 @@
       "main": [
         [
           {
-            "node": "Build System Prompt",
+            "node": "Load MCP Servers",
             "type": "main",
             "index": 0
           }
@@ -772,6 +797,17 @@
       ],
       "ai_tool": [
         []
+      ]
+    },
+    "Load MCP Servers": {
+      "main": [
+        [
+          {
+            "node": "Build System Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Build System Prompt": {

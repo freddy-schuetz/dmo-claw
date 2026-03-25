@@ -148,6 +148,16 @@ services:
     networks:
       - dmo-claw-net
 
+  # ── Email Bridge (IMAP/SMTP REST microservice) ──────────────
+  email-bridge:
+    build: ./email-bridge
+    container_name: dmo-claw-email-bridge
+    restart: unless-stopped
+    expose:
+      - "3100"
+    networks:
+      - dmo-claw-net
+
   # ── Crawl4AI (Web Reader — clean markdown from URLs) ────────
   crawl4ai:
     image: unclecode/crawl4ai:latest
