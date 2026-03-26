@@ -648,6 +648,11 @@ for wf in data.get('data', []):
       # associations. PUT preserves existing associations but cannot create
       # new ones — so workflows that were first imported with invalid
       # credential IDs (placeholders) would never get credentials via PUT.
+      # Deactivate first — n8n may refuse to delete active workflows
+      curl -s -X PATCH "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d '{"active": false}' > /dev/null
       curl -s -X DELETE "${N8N_BASE}/api/v1/workflows/${existing_id}" \
         -H "X-N8N-API-KEY: ${N8N_API_KEY}" > /dev/null
       resp=$(curl -s -X POST "${N8N_BASE}/api/v1/workflows" \
