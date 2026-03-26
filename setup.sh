@@ -565,7 +565,7 @@ for wf in data.get('data', []):
       -e "s|{{N8N_URL}}|${N8N_URL:-http://localhost:5678}|g" \
       -e "s|{{N8N_INTERNAL_URL}}|http://172.17.0.1:5678|g" \
       -e "s|{{N8N_API_KEY}}|${N8N_API_KEY}|g" \
-      -e "s|{{SUPABASE_URL}}|http://172.17.0.1:8000|g" \
+      -e "s|{{SUPABASE_URL}}|http://kong:8000|g" \
       -e "s|{{SUPABASE_SERVICE_KEY}}|${SUPABASE_SERVICE_KEY}|g" \
       -e "s|{{SUPABASE_ANON_KEY}}|${SUPABASE_ANON_KEY}|g" \
       -e "s|{{CREDENTIAL_FORM_WEBHOOK_ID}}|${CREDENTIAL_FORM_WEBHOOK_ID}|g" \
@@ -594,7 +594,7 @@ for f in workflows/*.json; do
     -e "s|{{N8N_URL}}|${N8N_URL:-http://localhost:5678}|g" \
     -e "s|{{N8N_INTERNAL_URL}}|http://172.17.0.1:5678|g" \
     -e "s|{{N8N_API_KEY}}|${N8N_API_KEY}|g" \
-    -e "s|{{SUPABASE_URL}}|http://172.17.0.1:8000|g" \
+    -e "s|{{SUPABASE_URL}}|http://kong:8000|g" \
     -e "s|{{SUPABASE_SERVICE_KEY}}|${SUPABASE_SERVICE_KEY}|g" \
     -e "s|{{SUPABASE_ANON_KEY}}|${SUPABASE_ANON_KEY}|g" \
     -e "s|{{CREDENTIAL_FORM_WEBHOOK_ID}}|${CREDENTIAL_FORM_WEBHOOK_ID}|g" \

@@ -81,8 +81,8 @@ services:
     image: kong:2.8.1
     container_name: dmo-claw-kong
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
