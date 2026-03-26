@@ -383,10 +383,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: true, response: $('AI Agent').first().json.output, session_id: $json.sessionId, source: $json.source, metadata: $json.metadata } }}",
-        "options": {
-          "responseCode": 200
-        }
+        "responseBody": "={{ JSON.stringify({ output: $json.assistantMessage }) }}"
       },
       "id": "webhook-reply",
       "name": "Webhook Reply",
