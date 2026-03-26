@@ -466,6 +466,15 @@ $$;
 GRANT ALL ON FUNCTION public.search_memory(public.vector, double precision, integer, text, text) TO anon, authenticated, service_role;
 GRANT ALL ON FUNCTION public.search_memory_keyword(text, integer, text) TO anon, authenticated, service_role;
 
+-- Fix PostgREST URL in soul.api_config (security: Kong is Docker-internal only)
+UPDATE soul SET content = REPLACE(content, 'http://172.17.0.1:8000', 'http://kong:8000') WHERE key = 'api_config' AND content LIKE '%172.17.0.1:8000%';
+
+-- Fix PostgREST URL in agents.member_management_read/write
+UPDATE agents SET content = REPLACE(content, 'http://172.17.0.1:8000', 'http://kong:8000') WHERE key LIKE 'member_management%' AND content LIKE '%172.17.0.1:8000%';
+
+-- Remove legacy single-user user_context (per-user context comes from user_profiles)
+DELETE FROM agents WHERE key = 'user_context';
+
 MIGRATIONS
 echo "  ✅ Migrations applied"
 
@@ -1484,11 +1493,12 @@ PREFERENCES (set_preference action):
   * Websuche ("Was sind aktuelle Trends im Alpentourismus?")
 - Respond in the user''s language (check their language preference)
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
-- setup_done will be set to true automatically after your first response — you do not need to do this yourself.'),
-
-  ('user_context', 'The user is {user}. Context: {ctx}')
+- setup_done will be set to true automatically after your first response — you do not need to do this yourself.')
 
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
+
+-- Remove legacy single-user user_context (per-user context comes from user_profiles now)
+DELETE FROM agents WHERE key = 'user_context';
 """
 result = subprocess.run(['psql','-h','localhost','-U','postgres','-d','postgres'],
   input=sql, capture_output=True, text=True, env=env)
