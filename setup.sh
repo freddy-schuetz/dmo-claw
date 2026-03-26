@@ -470,6 +470,21 @@ for c in creds:
     if c.get('type')=='postgres': print(c['id']); break
 " 2>/dev/null)
 
+EXISTING_ANTHROPIC_ID=$(echo "$EXISTING_CREDS" | python3 -c "
+import sys,json
+creds=json.load(sys.stdin).get('data',[])
+for c in creds:
+    if c.get('type')=='anthropicApi': print(c['id']); break
+" 2>/dev/null)
+
+if [ -n "$EXISTING_ANTHROPIC_ID" ]; then
+  ANTHROPIC_CRED_ID="$EXISTING_ANTHROPIC_ID"
+  echo "  ✅ Anthropic API → ${ANTHROPIC_CRED_ID} (existing)"
+elif [ -n "$ANTHROPIC_API_KEY" ] && [[ "$ANTHROPIC_API_KEY" != "your_"* ]]; then
+  ANTHROPIC_CRED_ID=$(create_cred "Anthropic API" "anthropicApi" "{\"apiKey\":\"${ANTHROPIC_API_KEY}\"}")
+  [ -z "$ANTHROPIC_CRED_ID" ] && echo -e "  ${YELLOW}⚠️  Anthropic credential failed — add manually in n8n UI${NC}" || echo "  ✅ Anthropic API → ${ANTHROPIC_CRED_ID} (created)"
+fi
+
 if [ -n "$EXISTING_WEBHOOK_AUTH_ID" ]; then
   WEBHOOK_AUTH_CRED_ID="$EXISTING_WEBHOOK_AUTH_ID"
   echo "  ✅ DMO Claw Webhook Auth → ${WEBHOOK_AUTH_CRED_ID} (existing)"
@@ -584,11 +599,27 @@ for f in workflows/*.json; do
     -e "s|{{SUPABASE_ANON_KEY}}|${SUPABASE_ANON_KEY}|g" \
     -e "s|{{CREDENTIAL_FORM_WEBHOOK_ID}}|${CREDENTIAL_FORM_WEBHOOK_ID}|g" \
     "$out"
-  # Credential ID replacements — only if IDs are actually set
-  [ -n "$WEBHOOK_AUTH_CRED_ID" ] && [ "$WEBHOOK_AUTH_CRED_ID" != "ERR" ] && \
-    sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"DMO Claw Webhook Auth\"|${WEBHOOK_AUTH_CRED_ID}\", \"name\": \"DMO Claw Webhook Auth\"|g" "$out"
-  [ -n "$POSTGRES_CRED_ID" ] && [ "$POSTGRES_CRED_ID" != "REPLACE_WITH_YOUR_CREDENTIAL_ID" ] && \
-    sed -i "s|REPLACE_WITH_YOUR_CREDENTIAL_ID\", \"name\": \"Supabase Postgres\"|${POSTGRES_CRED_ID}\", \"name\": \"Supabase Postgres\"|g" "$out"
+  # Credential ID replacements — proper JSON manipulation (sed can't match
+  # across line breaks, and "id"/"name" are on separate lines in the JSON)
+  python3 -c "
+import json, sys
+f = sys.argv[1]
+mapping = {}
+if sys.argv[2] and sys.argv[2] not in ('', 'ERR', 'REPLACE_WITH_YOUR_CREDENTIAL_ID'):
+    mapping['httpHeaderAuth'] = sys.argv[2]
+if sys.argv[3] and sys.argv[3] not in ('', 'REPLACE_WITH_YOUR_CREDENTIAL_ID'):
+    mapping['postgres'] = sys.argv[3]
+if sys.argv[4] and sys.argv[4] not in ('', 'REPLACE_WITH_YOUR_CREDENTIAL_ID'):
+    mapping['anthropicApi'] = sys.argv[4]
+with open(f) as fh:
+    wf = json.load(fh)
+for node in wf.get('nodes', []):
+    for cred_type, cred_data in node.get('credentials', {}).items():
+        if cred_type in mapping:
+            cred_data['id'] = mapping[cred_type]
+with open(f, 'w') as fh:
+    json.dump(wf, fh, indent=2, ensure_ascii=False)
+" "$out" "${WEBHOOK_AUTH_CRED_ID:-}" "${POSTGRES_CRED_ID:-}" "${ANTHROPIC_CRED_ID:-}"
 done
 IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
 
@@ -612,8 +643,27 @@ for wf in data.get('data', []):
 " "$wf_name" 2>/dev/null)
 
   if [ -n "$existing_id" ]; then
-    # UPDATE existing workflow (PUT) — preserves workflow ID, no duplicates
-    UPDATE_BODY=$(python3 -c "
+    if [ "$FORCE_FLAG" = "--force" ]; then
+      # FORCE: delete + re-create so n8n builds fresh credential-workflow
+      # associations. PUT preserves existing associations but cannot create
+      # new ones — so workflows that were first imported with invalid
+      # credential IDs (placeholders) would never get credentials via PUT.
+      curl -s -X DELETE "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" > /dev/null
+      resp=$(curl -s -X POST "${N8N_BASE}/api/v1/workflows" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+        -H "Content-Type: application/json" -d @"$f")
+      wf_id=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+      if [ -z "$wf_id" ]; then
+        err=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message','unknown error'))" 2>/dev/null)
+        echo -e "  ${RED}❌ ${wf_name}: ${err}${NC}"
+      else
+        WF_IDS[$name]=$wf_id
+        echo "  ✅ ${wf_name} → ${wf_id} (re-created)"
+      fi
+    else
+      # Normal update: PUT — preserves workflow ID and existing credential associations
+      UPDATE_BODY=$(python3 -c "
 import json, sys
 wf = json.load(open(sys.argv[1]))
 print(json.dumps({
@@ -623,11 +673,12 @@ print(json.dumps({
     'settings': wf.get('settings', {})
 }))
 " "$f" 2>/dev/null)
-    resp=$(curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${existing_id}" \
-      -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
-      -H "Content-Type: application/json" -d "$UPDATE_BODY")
-    WF_IDS[$name]="$existing_id"
-    echo "  ✅ ${wf_name} → ${existing_id} (updated)"
+      resp=$(curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+        -H "Content-Type: application/json" -d "$UPDATE_BODY")
+      WF_IDS[$name]="$existing_id"
+      echo "  ✅ ${wf_name} → ${existing_id} (updated)"
+    fi
   else
     # CREATE new workflow (POST)
     resp=$(curl -s -X POST "${N8N_BASE}/api/v1/workflows" \
