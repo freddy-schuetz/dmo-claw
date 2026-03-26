@@ -409,6 +409,66 @@ if [ -n "$SCHEMA_ERRORS" ]; then
 fi
 echo "  ✅ Schema applied"
 
+# ── 9b. Schema migrations (safe for existing installations) ───
+echo "  Applying migrations..."
+LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres << 'MIGRATIONS' 2>/dev/null
+
+-- Multi-user memory scoping: add user_id to memory_long
+ALTER TABLE memory_long ADD COLUMN IF NOT EXISTS user_id text;
+CREATE INDEX IF NOT EXISTS idx_memory_long_user_id ON memory_long USING btree (user_id);
+
+-- Drop old function signatures (without filter_user_id) if they exist
+DROP FUNCTION IF EXISTS public.search_memory(public.vector, double precision, integer, text);
+DROP FUNCTION IF EXISTS public.search_memory_keyword(text, integer);
+
+-- Recreate search functions with filter_user_id support
+CREATE OR REPLACE FUNCTION public.search_memory(
+  query_embedding public.vector,
+  match_threshold double precision DEFAULT 0.7,
+  match_count integer DEFAULT 5,
+  filter_category text DEFAULT NULL,
+  filter_user_id text DEFAULT NULL
+) RETURNS TABLE(id integer, content text, category text, importance integer, similarity double precision, metadata jsonb, created_at timestamp with time zone)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT ml.id, ml.content, ml.category, ml.importance,
+    1 - (ml.embedding <=> query_embedding) as similarity, ml.metadata, ml.created_at
+  FROM memory_long ml
+  WHERE (filter_category IS NULL OR ml.category = filter_category)
+    AND 1 - (ml.embedding <=> query_embedding) > match_threshold
+    AND (ml.expires_at IS NULL OR ml.expires_at > now())
+    AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
+  ORDER BY ml.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.search_memory_keyword(
+  search_query text,
+  match_count integer DEFAULT 5,
+  filter_user_id text DEFAULT NULL
+) RETURNS TABLE(id integer, content text, category text, importance integer, metadata jsonb, created_at timestamp with time zone)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT ml.id, ml.content, ml.category, ml.importance, ml.metadata, ml.created_at
+  FROM memory_long ml
+  WHERE ml.content ILIKE '%' || search_query || '%'
+    AND (ml.expires_at IS NULL OR ml.expires_at > now())
+    AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
+  ORDER BY ml.importance DESC, ml.created_at DESC
+  LIMIT match_count;
+END;
+$$;
+
+-- Grant permissions on new function signatures
+GRANT ALL ON FUNCTION public.search_memory(public.vector, double precision, integer, text, text) TO anon, authenticated, service_role;
+GRANT ALL ON FUNCTION public.search_memory_keyword(text, integer, text) TO anon, authenticated, service_role;
+
+MIGRATIONS
+echo "  ✅ Migrations applied"
+
 # Reload PostgREST schema cache so new tables are immediately available via API
 docker kill --signal=SIGUSR1 $(docker ps -q --filter name=rest) 2>/dev/null || true
 
