@@ -632,29 +632,35 @@ for name in $IMPORT_ORDER; do
   [ -f "$f" ] || continue
   wf_name=$(python3 -c "import json; print(json.load(open('$f')).get('name','?'))" 2>/dev/null)
 
-  # Check if workflow with this name already exists
-  existing_id=$(echo "$EXISTING_WFS" | python3 -c "
+  # Check if workflows with this name already exist (find ALL matches, not just first)
+  existing_ids=$(echo "$EXISTING_WFS" | python3 -c "
 import json,sys
 name = sys.argv[1]
 data = json.load(sys.stdin)
 for wf in data.get('data', []):
     if wf['name'] == name:
-        print(wf['id']); break
+        print(wf['id'])
 " "$wf_name" 2>/dev/null)
 
-  if [ -n "$existing_id" ]; then
+  if [ -n "$existing_ids" ]; then
     if [ "$FORCE_FLAG" = "--force" ]; then
-      # FORCE: delete + re-create so n8n builds fresh credential-workflow
+      # FORCE: delete ALL matches + re-create so n8n builds fresh credential-workflow
       # associations. PUT preserves existing associations but cannot create
       # new ones — so workflows that were first imported with invalid
       # credential IDs (placeholders) would never get credentials via PUT.
-      # Deactivate first — n8n may refuse to delete active workflows
-      curl -s -X PATCH "${N8N_BASE}/api/v1/workflows/${existing_id}" \
-        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
-        -H "Content-Type: application/json" \
-        -d '{"active": false}' > /dev/null
-      curl -s -X DELETE "${N8N_BASE}/api/v1/workflows/${existing_id}" \
-        -H "X-N8N-API-KEY: ${N8N_API_KEY}" > /dev/null
+      for existing_id in $existing_ids; do
+        # Deactivate first — n8n refuses to delete active workflows
+        curl -s -X PATCH "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+          -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d '{"active": false}' > /dev/null
+        DEL_RESP=$(curl -s -X DELETE "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+          -H "X-N8N-API-KEY: ${N8N_API_KEY}")
+        DEL_ERR=$(echo "$DEL_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null)
+        if [ -n "$DEL_ERR" ]; then
+          echo -e "  ${YELLOW}⚠️  Delete ${existing_id}: ${DEL_ERR}${NC}"
+        fi
+      done
       resp=$(curl -s -X POST "${N8N_BASE}/api/v1/workflows" \
         -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
         -H "Content-Type: application/json" -d @"$f")
@@ -678,11 +684,13 @@ print(json.dumps({
     'settings': wf.get('settings', {})
 }))
 " "$f" 2>/dev/null)
-      resp=$(curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${existing_id}" \
+      # Use first match for PUT update
+      first_id=$(echo "$existing_ids" | head -1)
+      resp=$(curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${first_id}" \
         -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
         -H "Content-Type: application/json" -d "$UPDATE_BODY")
-      WF_IDS[$name]="$existing_id"
-      echo "  ✅ ${wf_name} → ${existing_id} (updated)"
+      WF_IDS[$name]="$first_id"
+      echo "  ✅ ${wf_name} → ${first_id} (updated)"
     fi
   else
     # CREATE new workflow (POST)
