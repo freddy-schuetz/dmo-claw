@@ -107,9 +107,12 @@ BEGIN
     ml.created_at
   FROM memory_long ml
   WHERE
-    ml.content ILIKE '%' || search_query || '%'
-    AND (ml.expires_at IS NULL OR ml.expires_at > now())
+    (ml.expires_at IS NULL OR ml.expires_at > now())
     AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
+    AND EXISTS (
+      SELECT 1 FROM unnest(string_to_array(lower(search_query), ' ')) AS word
+      WHERE length(word) >= 3 AND lower(ml.content) LIKE '%' || word || '%'
+    )
   ORDER BY ml.importance DESC, ml.created_at DESC
   LIMIT match_count;
 END;

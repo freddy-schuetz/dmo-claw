@@ -454,7 +454,10 @@ BEGIN
   RETURN QUERY
   SELECT ml.id, ml.content, ml.category, ml.importance, ml.metadata, ml.created_at
   FROM memory_long ml
-  WHERE ml.content ILIKE '%' || search_query || '%'
+  WHERE EXISTS (
+      SELECT 1 FROM unnest(string_to_array(lower(search_query), ' ')) AS word
+      WHERE length(word) >= 3 AND lower(ml.content) LIKE '%' || word || '%'
+    )
     AND (ml.expires_at IS NULL OR ml.expires_at > now())
     AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
   ORDER BY ml.importance DESC, ml.created_at DESC
