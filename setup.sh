@@ -867,16 +867,106 @@ if [ "$INSTALL_MODE" = "update" ] && [ "$FORCE_FLAG" != "--force" ] && [ -z "${E
 fi
 
 # ── 12. Setup Wizard via CLI (no n8n workflow needed) ────────
-if [ "$INSTALL_MODE" = "update" ] && [ "$FORCE_FLAG" != "--force" ]; then
-  echo -e "\n${GREEN}🧙 Skipping personalization (update mode — use --force to reconfigure)${NC}"
-else
 
-# Load existing personalization as defaults (for --force reconfiguration)
+# Load existing personalization from DB (always — needed for defaults and skip logic)
 EXISTING_BOT_NAME=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
   "SELECT content FROM soul WHERE key='name' LIMIT 1" 2>/dev/null | xargs)
-# Try to find admin email from dmo_users or user_profiles
 EXISTING_ADMIN_EMAIL=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
   "SELECT oi_email FROM dmo_users WHERE role='admin' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_USER=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT display_name FROM user_profiles WHERE user_id LIKE 'oi:%' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_LANG=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT preferences->>'language' FROM user_profiles WHERE user_id LIKE 'oi:%' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_CTX=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT context FROM user_profiles WHERE user_id LIKE 'oi:%' LIMIT 1" 2>/dev/null | sed 's/^ *//;s/ *$//')
+EXISTING_TZ=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT timezone FROM user_profiles WHERE user_id LIKE 'oi:%' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_PERSONA=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT content FROM soul WHERE key='persona' LIMIT 1" 2>/dev/null | sed 's/^ *//;s/ *$//')
+EXISTING_DMO_ORG=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT content FROM soul WHERE key='organization_name' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_DMO_REGION=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT content FROM soul WHERE key='region' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_DMO_HASHTAGS=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT content FROM soul WHERE key='brand_hashtags' LIMIT 1" 2>/dev/null | xargs)
+EXISTING_DMO_INSTAGRAM=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c \
+  "SELECT content FROM soul WHERE key='instagram_account' LIMIT 1" 2>/dev/null | xargs)
+
+SKIP_PERSONALITY=false
+SKIP_DMO=false
+SKIP_USERS=false
+SKIP_EMBEDDING=false
+SKIP_PERSONA_WRITE=false
+
+if [ "$INSTALL_MODE" = "update" ] && [ "$FORCE_FLAG" != "--force" ]; then
+  # Normal update → skip everything, use existing DB values
+  echo -e "\n${GREEN}🧙 Skipping personalization (update mode — use --force to reconfigure)${NC}"
+  SKIP_PERSONALITY=true
+  SKIP_DMO=true
+  SKIP_USERS=true
+  SKIP_EMBEDDING=true
+  SKIP_PERSONA_WRITE=true
+  BOT_NAME="${EXISTING_BOT_NAME:-Assistant}"
+  ADMIN_EMAIL="${EXISTING_ADMIN_EMAIL:-admin@example.com}"
+  USER_DISPLAY="${EXISTING_USER:-Admin}"
+  PREFERRED_LANG="${EXISTING_LANG:-English}"
+  CTX="${EXISTING_CTX:-Personal assistant and automation}"
+  TIMEZONE="${EXISTING_TZ:-UTC}"
+  DMO_ORG="${EXISTING_DMO_ORG:-}"
+  DMO_REGION="${EXISTING_DMO_REGION:-}"
+  DMO_HASHTAGS="${EXISTING_DMO_HASHTAGS:-}"
+  DMO_INSTAGRAM="${EXISTING_DMO_INSTAGRAM:-}"
+elif [ "$INSTALL_MODE" = "update" ] && [ "$FORCE_FLAG" = "--force" ] && [ -n "$EXISTING_BOT_NAME" ]; then
+  # --force on existing install → ask before each block
+  echo -e "\n${GREEN}🧙 Reconfiguration (--force)${NC}"
+  echo "────────────────────────────"
+  echo ""
+  read -rp "  Change personality settings? (y/N): " CHANGE_PERSONALITY
+  if [[ "${CHANGE_PERSONALITY,,}" =~ ^y ]]; then
+    SKIP_PERSONALITY=false
+  else
+    SKIP_PERSONALITY=true
+    SKIP_PERSONA_WRITE=true
+    BOT_NAME="$EXISTING_BOT_NAME"
+    ADMIN_EMAIL="${EXISTING_ADMIN_EMAIL:-admin@example.com}"
+    USER_DISPLAY="${EXISTING_USER:-Admin}"
+    PREFERRED_LANG="${EXISTING_LANG:-English}"
+    CTX="${EXISTING_CTX:-Personal assistant and automation}"
+    TIMEZONE="${EXISTING_TZ:-UTC}"
+    echo -e "  ${GREEN}✅ Keeping current personality${NC}"
+  fi
+  echo ""
+  read -rp "  Change DMO configuration? (y/N): " CHANGE_DMO
+  if [[ "${CHANGE_DMO,,}" =~ ^y ]]; then
+    SKIP_DMO=false
+  else
+    SKIP_DMO=true
+    DMO_ORG="${EXISTING_DMO_ORG:-}"
+    DMO_REGION="${EXISTING_DMO_REGION:-}"
+    DMO_HASHTAGS="${EXISTING_DMO_HASHTAGS:-}"
+    DMO_INSTAGRAM="${EXISTING_DMO_INSTAGRAM:-}"
+    echo -e "  ${GREEN}✅ Keeping current DMO config${NC}"
+  fi
+  echo ""
+  read -rp "  Change DMO users? (y/N): " CHANGE_USERS
+  if [[ "${CHANGE_USERS,,}" =~ ^y ]]; then
+    SKIP_USERS=false
+  else
+    SKIP_USERS=true
+    echo -e "  ${GREEN}✅ Keeping current users${NC}"
+  fi
+  echo ""
+  read -rp "  Change embedding/RAG settings? (y/N): " CHANGE_EMBEDDING
+  if [[ "${CHANGE_EMBEDDING,,}" =~ ^y ]]; then
+    SKIP_EMBEDDING=false
+  else
+    SKIP_EMBEDDING=true
+    echo -e "  ${GREEN}✅ Keeping current embedding config${NC}"
+  fi
+fi
+
+# ── Personality block ──────────────────────────────────────────
+if [ "$SKIP_PERSONALITY" = "false" ]; then
 
 echo -e "\n${GREEN}🧙 Personalization setup${NC}"
 echo "────────────────────────────"
@@ -889,7 +979,7 @@ echo ""
 ADMIN_EMAIL=$(cli_ask "Admin email (OpenWebUI login)" "${EXISTING_ADMIN_EMAIL:-admin@example.com}")
 SYS_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo "UTC")
 BOT_NAME=$(cli_ask "Agent name" "${EXISTING_BOT_NAME:-Assistant}")
-USER_DISPLAY=$(cli_ask "Your name" "Admin")
+USER_DISPLAY=$(cli_ask "Your name" "${EXISTING_USER:-Admin}")
 PREFERRED_LANG=$(cli_ask "Preferred language" "${EXISTING_LANG:-English}")
 CTX=$(cli_ask "What will you use this agent for" "${EXISTING_CTX:-Personal assistant and automation}")
 TIMEZONE=$(cli_ask "Timezone" "${EXISTING_TZ:-$SYS_TZ}")
@@ -921,23 +1011,43 @@ echo ""
 echo "  Custom personality (optional — overrides the above):"
 echo "  Describe exactly how the agent should behave, in your own words."
 echo "  Leave empty to use the settings above."
-read -rp "  Custom persona: " CUSTOM_PERSONA
-if [ -n "$CUSTOM_PERSONA" ]; then
+EXISTING_CUSTOM_PERSONA=""
+if [ -n "$EXISTING_PERSONA" ] && [[ "$EXISTING_PERSONA" != *"a helpful AI assistant"* ]]; then
+  EXISTING_CUSTOM_PERSONA="$EXISTING_PERSONA"
+  echo -e "  Current: ${EXISTING_CUSTOM_PERSONA:0:80}..."
+fi
+read -rp "  Custom persona [${EXISTING_CUSTOM_PERSONA:+keep current}]: " CUSTOM_PERSONA
+if [ -z "$CUSTOM_PERSONA" ] && [ -n "$EXISTING_CUSTOM_PERSONA" ]; then
+  USE_FULL_PERSONA="$EXISTING_CUSTOM_PERSONA"
+  PROACTIVE=""
+  echo -e "  ${GREEN}✅ Keeping current custom persona${NC}"
+elif [ -n "$CUSTOM_PERSONA" ]; then
   STYLE="$CUSTOM_PERSONA"
   PROACTIVE=""
   echo -e "  ${GREEN}✅ Using custom persona${NC}"
 fi
+
+fi # end SKIP_PERSONALITY
+
+# ── DMO Configuration block ───────────────────────────────────
+if [ "$SKIP_DMO" = "false" ]; then
 
 echo ""
 echo -e "${GREEN}🏔️ DMO Configuration${NC}"
 echo "────────────────────────────"
 echo "Configure your tourism association details."
 echo ""
-DMO_ORG=$(cli_ask "Organization name" "Tourismusverband Zugspitzregion")
-DMO_REGION=$(cli_ask "Region" "Zugspitzregion / Garmisch-Partenkirchen")
-DMO_HASHTAGS=$(cli_ask "Brand hashtags (comma-separated)" "#zugspitzregion,#garmisch,#bayern")
-DMO_INSTAGRAM=$(cli_ask "Instagram account (optional)" "")
+DMO_ORG=$(cli_ask "Organization name" "${EXISTING_DMO_ORG:-Tourismusverband Zugspitzregion}")
+DMO_REGION=$(cli_ask "Region" "${EXISTING_DMO_REGION:-Zugspitzregion / Garmisch-Partenkirchen}")
+DMO_HASHTAGS=$(cli_ask "Brand hashtags (comma-separated)" "${EXISTING_DMO_HASHTAGS:-#zugspitzregion,#garmisch,#bayern}")
+DMO_INSTAGRAM=$(cli_ask "Instagram account (optional)" "${EXISTING_DMO_INSTAGRAM:-}")
 echo ""
+
+fi # end SKIP_DMO
+
+# ── DMO User Setup block ──────────────────────────────────────
+DMO_USERS_SQL=""
+if [ "$SKIP_USERS" = "false" ]; then
 
 echo -e "${GREEN}👥 DMO User Setup${NC}"
 echo "────────────────────────────"
@@ -945,7 +1055,6 @@ echo "Add DMO team members (they need an OpenWebUI account)."
 echo "Leave empty to skip."
 echo ""
 
-DMO_USERS_SQL=""
 for i in 1 2 3 4 5; do
   read -rp "  User $i — Name (empty to stop): " DMO_U_NAME
   [ -z "$DMO_U_NAME" ] && break
@@ -971,6 +1080,11 @@ ON CONFLICT (oi_email) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role;
   echo -e "  ${GREEN}✅ ${DMO_U_NAME} (${DMO_U_ROLE})${NC}"
   echo ""
 done
+
+fi # end SKIP_USERS
+
+# ── RAG / Embedding block ─────────────────────────────────────
+if [ "$SKIP_EMBEDDING" = "false" ]; then
 
 echo ""
 echo -e "${GREEN}🧠 RAG / Vector Memory (optional)${NC}"
@@ -1000,8 +1114,7 @@ else
   echo -e "  ⏭️  Skipped — using keyword search"
 fi
 
-# Write embedding + anthropic config to DB (tools_config table)
-# Workflows read config from DB at runtime, not from env vars
+# Write embedding config to DB (tools_config table)
 if [ -n "$EMBEDDING_API_KEY" ]; then
   LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "
     INSERT INTO tools_config (tool_name, config, enabled)
@@ -1009,6 +1122,10 @@ if [ -n "$EMBEDDING_API_KEY" ]; then
     ON CONFLICT (tool_name) DO UPDATE SET config = EXCLUDED.config, enabled = true, updated_at = now();
   " > /dev/null 2>&1
 fi
+
+fi # end SKIP_EMBEDDING
+
+# Write anthropic config to DB (always — not gated by embedding skip)
 if [ -n "$ANTHROPIC_API_KEY" ] && [[ "$ANTHROPIC_API_KEY" != "your_"* ]]; then
   LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "
     INSERT INTO tools_config (tool_name, config, enabled)
@@ -1026,6 +1143,7 @@ import subprocess, os
 
 pw = os.environ.get('POSTGRES_PASSWORD', '')
 env = {**os.environ, 'PGPASSWORD': pw, 'LANG': 'C', 'LC_ALL': 'C'}
+skip_persona = '${SKIP_PERSONA_WRITE}' == 'true'
 
 def esc(s):
     return s.replace("'", "''")
@@ -1045,7 +1163,10 @@ dmo_hashtags  = esc('${DMO_HASHTAGS}')
 dmo_instagram = esc('${DMO_INSTAGRAM}')
 uname   = user.lower().replace(' ', '_')
 
-sql = f"""
+sql = ""
+
+if not skip_persona:
+    sql += f"""
 INSERT INTO public.soul (key, content) VALUES
   ('name', '{bot}'),
   ('persona', 'You are {bot}, the AI assistant for {dmo_org}. You help DMO team members with tourism marketing, member management, reviews, and social media. Preferred language: {lang}. {style}'),
@@ -1061,7 +1182,10 @@ INSERT INTO public.soul (key, content) VALUES
   ('instagram_account', '{dmo_instagram}'),
   ('language', 'Deutsch (primär), Englisch (sekundär)')
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
+"""
 
+# Always write user_profiles and mcp_registry (uses existing values when personality skipped)
+sql += f"""
 INSERT INTO public.user_profiles (user_id, name, display_name, timezone, context, preferences, setup_done, setup_step)
 VALUES ('oi:{admin_email}', '{uname}', '{user}', '{tz}', '{ctx}', '{{"language": "{lang}"}}'::jsonb, false, 0)
 ON CONFLICT (user_id) DO UPDATE SET
@@ -1073,15 +1197,17 @@ VALUES ('Wetter', 'wetter', '{mcp_url}/mcp/wetter', 'Weather via Open-Meteo', AR
 ON CONFLICT (path) DO UPDATE SET active = true;
 """
 
-result = subprocess.run(
-    ['psql', '-h', 'localhost', '-U', 'postgres', '-d', 'postgres'],
-    input=sql, capture_output=True, text=True, env=env
-)
-if result.returncode != 0:
-    print('SQL ERROR:', result.stderr[:300])
-    exit(1)
+if sql.strip():
+    result = subprocess.run(
+        ['psql', '-h', 'localhost', '-U', 'postgres', '-d', 'postgres'],
+        input=sql, capture_output=True, text=True, env=env
+    )
+    if result.returncode != 0:
+        print('SQL ERROR:', result.stderr[:300])
+        exit(1)
 PYEOF
 
+if [ "$SKIP_PERSONA_WRITE" != "true" ]; then
 python3 - <<PYEOF2
 import subprocess, os
 pw = os.environ.get('POSTGRES_PASSWORD', '')
@@ -1217,33 +1343,22 @@ result = subprocess.run(['psql','-h','localhost','-U','postgres','-d','postgres'
 if result.returncode != 0:
     print('agents SQL error:', result.stderr[:200])
 PYEOF2
+fi # end SKIP_PERSONA_WRITE guard for agents table
 
-# Write user profile to DB (so --force picks up existing values next time)
-LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "
-INSERT INTO public.user_profiles (user_id, display_name, timezone, context)
-VALUES ('oi:${ADMIN_EMAIL}', '$(echo "$USER_DISPLAY" | sed "s/'/''/g")', '${TIMEZONE:-UTC}', '$(echo "$CTX" | sed "s/'/''/g")')
-ON CONFLICT (user_id) DO UPDATE SET
-  display_name = EXCLUDED.display_name,
-  timezone = EXCLUDED.timezone,
-  context = EXCLUDED.context,
-  updated_at = now();
-" > /dev/null 2>&1
-
-# Seed DMO users
-if [ -n "$DMO_USERS_SQL" ]; then
+# Seed DMO users (only when user setup ran)
+if [ "$SKIP_USERS" = "false" ] && [ -n "$DMO_USERS_SQL" ]; then
   LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "$DMO_USERS_SQL" > /dev/null 2>&1
   DMO_USER_COUNT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c "SELECT COUNT(*) FROM dmo_users WHERE active = true" 2>/dev/null | tr -d ' ')
   echo -e "  ${GREEN}✅ ${DMO_USER_COUNT:-0} DMO user(s) configured${NC}"
 fi
 
-# Verify soul was written
+# Verify soul was written (or still exists from previous run)
 SOUL_COUNT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -t -c "SELECT COUNT(*) FROM soul" 2>/dev/null | tr -d ' ')
 if [ "${SOUL_COUNT:-0}" -gt 0 ]; then
   echo -e "  ${GREEN}✅ Agent configured as '${BOT_NAME}', user '${USER_DISPLAY}' (${SOUL_COUNT} soul rows)${NC}"
 else
   echo -e "  ${RED}❌ Soul table empty — DB write failed. Check postgres connection.${NC}"
 fi
-fi  # end INSTALL_MODE guard for personalization
 
 # ── Seed heartbeat_config ──────────────────────────────────────
 echo -e "${CYAN}Seeding heartbeat configuration...${NC}"
