@@ -59,10 +59,10 @@ COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
--- Name: search_memory(public.vector, double precision, integer, text); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: search_memory(public.vector, double precision, integer, text, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision DEFAULT 0.7, match_count integer DEFAULT 5, filter_category text DEFAULT NULL::text) RETURNS TABLE(id integer, content text, category text, importance integer, similarity double precision, metadata jsonb, created_at timestamp with time zone)
+CREATE FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision DEFAULT 0.7, match_count integer DEFAULT 5, filter_category text DEFAULT NULL::text, filter_user_id text DEFAULT NULL::text) RETURNS TABLE(id integer, content text, category text, importance integer, similarity double precision, metadata jsonb, created_at timestamp with time zone)
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -76,23 +76,24 @@ BEGIN
     ml.metadata,
     ml.created_at
   FROM memory_long ml
-  WHERE 
+  WHERE
     (filter_category IS NULL OR ml.category = filter_category)
     AND 1 - (ml.embedding <=> query_embedding) > match_threshold
     AND (ml.expires_at IS NULL OR ml.expires_at > now())
+    AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
   ORDER BY ml.embedding <=> query_embedding
   LIMIT match_count;
 END;
 $$;
 
 
-ALTER FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text) OWNER TO postgres;
+ALTER FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text, filter_user_id text) OWNER TO postgres;
 
 --
--- Name: search_memory_keyword(text, integer); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: search_memory_keyword(text, integer, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.search_memory_keyword(search_query text, match_count integer DEFAULT 5) RETURNS TABLE(id integer, content text, category text, importance integer, metadata jsonb, created_at timestamp with time zone)
+CREATE FUNCTION public.search_memory_keyword(search_query text, match_count integer DEFAULT 5, filter_user_id text DEFAULT NULL::text) RETURNS TABLE(id integer, content text, category text, importance integer, metadata jsonb, created_at timestamp with time zone)
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -105,16 +106,17 @@ BEGIN
     ml.metadata,
     ml.created_at
   FROM memory_long ml
-  WHERE 
+  WHERE
     ml.content ILIKE '%' || search_query || '%'
     AND (ml.expires_at IS NULL OR ml.expires_at > now())
+    AND (filter_user_id IS NULL OR ml.user_id IS NULL OR ml.user_id = filter_user_id)
   ORDER BY ml.importance DESC, ml.created_at DESC
   LIMIT match_count;
 END;
 $$;
 
 
-ALTER FUNCTION public.search_memory_keyword(search_query text, match_count integer) OWNER TO postgres;
+ALTER FUNCTION public.search_memory_keyword(search_query text, match_count integer, filter_user_id text) OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -329,6 +331,7 @@ CREATE TABLE public.memory_long (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     expires_at timestamp with time zone,
+    user_id text,
     CONSTRAINT memory_long_importance_check CHECK (((importance >= 1) AND (importance <= 10)))
 );
 
@@ -801,6 +804,13 @@ CREATE INDEX idx_memory_long_importance ON public.memory_long USING btree (impor
 
 
 --
+-- Name: idx_memory_long_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_memory_long_user_id ON public.memory_long USING btree (user_id);
+
+
+--
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
 --
 
@@ -811,21 +821,21 @@ GRANT USAGE ON SCHEMA public TO service_role;
 
 
 --
--- Name: FUNCTION search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text, filter_user_id text); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text) TO anon;
-GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text) TO authenticated;
-GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text) TO service_role;
+GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text, filter_user_id text) TO anon;
+GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text, filter_user_id text) TO authenticated;
+GRANT ALL ON FUNCTION public.search_memory(query_embedding public.vector, match_threshold double precision, match_count integer, filter_category text, filter_user_id text) TO service_role;
 
 
 --
--- Name: FUNCTION search_memory_keyword(search_query text, match_count integer); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION search_memory_keyword(search_query text, match_count integer, filter_user_id text); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer) TO anon;
-GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer) TO authenticated;
-GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer) TO service_role;
+GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer, filter_user_id text) TO anon;
+GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer, filter_user_id text) TO authenticated;
+GRANT ALL ON FUNCTION public.search_memory_keyword(search_query text, match_count integer, filter_user_id text) TO service_role;
 
 
 --
