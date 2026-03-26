@@ -381,6 +381,13 @@
       }
     },
     {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, response: $('AI Agent').first().json.output, session_id: $json.sessionId, source: $json.source, metadata: $json.metadata } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
       "id": "webhook-reply",
       "name": "Webhook Reply",
       "type": "n8n-nodes-base.respondToWebhook",
