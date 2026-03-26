@@ -690,7 +690,7 @@ with open(f, 'w') as fh:
     json.dump(wf, fh, indent=2, ensure_ascii=False)
 " "$out" "${WEBHOOK_AUTH_CRED_ID:-}" "${POSTGRES_CRED_ID:-}" "${ANTHROPIC_CRED_ID:-}"
 done
-IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
+IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-save memory-search memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -795,6 +795,8 @@ replacements = {
   'REPLACE_LIBRARY_MANAGER_ID':  '${WF_IDS[mcp-library-manager]}',
   'REPLACE_SUB_AGENT_RUNNER_ID':       '${WF_IDS[sub-agent-runner]}',
   'REPLACE_AGENT_LIBRARY_MANAGER_ID':  '${WF_IDS[agent-library-manager]}',
+  'REPLACE_MEMORY_SAVE_ID':            '${WF_IDS[memory-save]}',
+  'REPLACE_MEMORY_SEARCH_ID':          '${WF_IDS[memory-search]}',
 }
 for placeholder, real_id in replacements.items():
     raw = raw.replace(placeholder, real_id)
@@ -845,6 +847,8 @@ print(raw)
     echo "  ✅ Library Manager: ${WF_IDS[mcp-library-manager]}"
     echo "  ✅ Sub-Agent Runner: ${WF_IDS[sub-agent-runner]}"
     echo "  ✅ Agent Library:   ${WF_IDS[agent-library-manager]}"
+    echo "  ✅ Memory Save:     ${WF_IDS[memory-save]}"
+    echo "  ✅ Memory Search:   ${WF_IDS[memory-search]}"
     [ -n "$REAL_WEBHOOK_AUTH_ID" ] && echo "  ✅ Webhook Auth:    ${REAL_WEBHOOK_AUTH_ID}"
     [ -n "$REAL_POSTGRES_ID" ]  && echo "  ✅ Postgres cred:   ${REAL_POSTGRES_ID}"
     [ -n "$REAL_ANTHROPIC_ID" ] && echo "  ✅ Anthropic cred:  ${REAL_ANTHROPIC_ID} (if already added)"
@@ -947,7 +951,7 @@ if [ -n "$CREDFORM_ID" ]; then
 fi
 
 # Activate sub-workflows (required since n8n 2.x)
-for SUB_WF in mcp-client mcp-builder mcp-library-manager agent-library-manager sub-agent-runner workflow-builder reminder-factory background-checker; do
+for SUB_WF in mcp-client mcp-builder mcp-library-manager agent-library-manager sub-agent-runner workflow-builder reminder-factory background-checker memory-save memory-search; do
   SUB_WF_ID=${WF_IDS[$SUB_WF]}
   if [ -n "$SUB_WF_ID" ]; then
     curl -s -X POST "${N8N_BASE}/api/v1/workflows/${SUB_WF_ID}/activate" \

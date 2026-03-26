@@ -396,13 +396,34 @@
     },
     {
       "parameters": {
-        "description": "Search long-term memory. Input: JSON with search_query (string) and user_id (sessionId from system prompt, format: oi:email@example.com). ALWAYS include user_id to get personal + org memories for the current user.",
-        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {search_query: query}; }\nconst searchQuery = input.search_query || input.query || query;\nconst userId = input.user_id || null;\nconst embedding = await getEmbedding(searchQuery);\n\nlet result;\nif (embedding) {\n  // Vector search via cosine similarity\n  result = await helpers.httpRequest({\n    method: 'POST',\n    url: '{{SUPABASE_URL}}/rest/v1/rpc/search_memory',\n    headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ query_embedding: JSON.stringify(embedding), match_threshold: 0.5, match_count: 5, filter_user_id: userId })\n  });\n} else {\n  // Fallback to keyword search\n  result = await helpers.httpRequest({\n    method: 'POST',\n    url: '{{SUPABASE_URL}}/rest/v1/rpc/search_memory_keyword',\n    headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ search_query: searchQuery, filter_user_id: userId })\n  });\n}\nreturn JSON.stringify(result);"
+        "description": "Search long-term memory for relevant information. Input: JSON with search_query (string). Automatically scoped to the current user's personal memories + shared org memories.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MEMORY_SEARCH_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sessionId": "={{ $('Build System Prompt').item.json.sessionId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "type": "string",
+              "required": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
       "id": "tool-memory-search",
       "name": "Memory Search",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
       "position": [
         1920,
         208
@@ -410,13 +431,34 @@
     },
     {
       "parameters": {
-        "description": "Save important info to long-term memory. Input: JSON with content (string), category (general/decision/preference/contact/project), importance (1-10), scope ('user' or 'org', default 'user'), user_id (sessionId from system prompt, format: oi:email@example.com). scope 'user': personal info (preferences, habits, facts about the user). scope 'org': organization/DMO knowledge (business facts, regional info, member data, shared decisions). ALWAYS include user_id.",
-        "jsCode": "// Load embedding config from DB and generate embedding\nasync function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {content: query}; }\nconst content = input.content || query;\nconst scope = input.scope || 'user';\nconst userId = (scope === 'org') ? null : (input.user_id || null);\nconst embedding = await getEmbedding(content);\nconst body = { content, category: input.category || 'general', importance: input.importance || 5, user_id: userId, metadata: { source: 'agent', scope } };\nif (embedding) body.embedding = JSON.stringify(embedding);\nconst result = await helpers.httpRequest({\n  method: 'POST',\n  url: '{{SUPABASE_URL}}/rest/v1/memory_long',\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify(body)\n});\nreturn JSON.stringify({ success: true, saved: content, scope, user_id: userId, vectorized: !!embedding });"
+        "description": "Save important info to long-term memory. Input: JSON with content (string), category (general/decision/preference/contact/project), importance (1-10), scope ('user' or 'org', default 'user'). scope 'user': personal info (preferences, habits, facts about the user). scope 'org': organization/DMO knowledge (business facts, regional info, member data, shared decisions). User identity is handled automatically.",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MEMORY_SAVE_ID",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sessionId": "={{ $('Build System Prompt').item.json.sessionId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "type": "string",
+              "required": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
       "id": "tool-memory-save",
       "name": "Memory Save",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.2,
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
       "position": [
         2048,
         208
