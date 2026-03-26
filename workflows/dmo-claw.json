@@ -495,7 +495,7 @@
         "description": "Builds new n8n workflows for general automations and integrations. Use when the user explicitly wants to automate something or build an integration workflow. NOT for MCP servers — use mcp_builder for that. NOT as a fallback when other tools fail. Input: JSON with 'task' (description of the automation to build).",
         "workflowId": {
           "__rl": true,
-          "value": "hfKOqn9XDe9NeXmu",
+          "value": "REPLACE_WORKFLOW_BUILDER_ID",
           "mode": "id"
         },
         "workflowInputs": {
@@ -522,7 +522,7 @@
         "description": "Builds a new MCP Server workflow in n8n. ALWAYS use this when the user wants to build an MCP server, MCP tool, or API integration as MCP. NEVER use WorkflowBuilder for MCP. On error: report the error, do NOT fall back to WorkflowBuilder. Input: JSON with 'task' (description of what the server should do). After build: user must deactivate + reactivate the workflow in n8n UI (webhook registration bug).",
         "workflowId": {
           "__rl": true,
-          "value": "2yp38ongINaRCf9u",
+          "value": "REPLACE_MCP_BUILDER_ID",
           "mode": "id"
         },
         "workflowInputs": {
@@ -576,7 +576,7 @@
         "description": "Manage the MCP template library. Install, list, or remove MCP server templates from the catalog. Add API credentials for installed templates.\n\nActions:\n- list_templates: Show available templates. Optional: category filter.\n- install_template: Install a template by ID. Creates the MCP server workflow.\n- remove_template: Remove an installed template by ID.\n- add_credential: Generate secure one-time link(s) to add/update API key(s) for an installed template. Required: id. Optional: cred_key (if omitted, generates links for ALL required credentials).\n\nInput: JSON with action and parameters.\nExamples:\n{\"action\":\"list_templates\"}\n{\"action\":\"install_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"remove_template\",\"id\":\"weather-openmeteo\"}\n{\"action\":\"add_credential\",\"id\":\"google-reviews\"}",
         "workflowId": {
           "__rl": true,
-          "value": "sRg6WiN6nIEQ3WJs",
+          "value": "REPLACE_LIBRARY_MANAGER_ID",
           "mode": "id"
         },
         "workflowInputs": {
