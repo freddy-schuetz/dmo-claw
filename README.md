@@ -2,7 +2,7 @@
 
 A self-hosted AI agent for Destination Management Organizations (DMOs), built on [n8n-claw](https://github.com/freddy-schuetz/n8n-claw). Monitors Google Reviews, posts to Instagram, delivers alpine weather reports, manages tasks and reminders, delegates to expert agents, and generates proactive briefings — all via OpenWebUI or any webhook-compatible chat interface.
 
-First use case: **Tourismusverband Zugspitzregion** with role-based access for Marketing and Member Relations teams.
+Includes a demo configuration for a fictional **Tourismusverband Zugspitzregion** — showing how a DMO could use the agent with role-based access for Marketing and Member Relations teams.
 
 ## Contents
 
@@ -339,8 +339,8 @@ DMO team members are configured during setup with roles:
 
 | Role | Access | Example |
 |---|---|---|
-| `marketing` | Instagram, weather, reviews (read-only), tasks | Sandra (Marketing team) |
-| `member_relations` | Reviews, member businesses (read-only), tasks | Thomas (Member Relations) |
+| `marketing` | Instagram, weather, reviews (read-only), tasks | e.g. marketing team members |
+| `member_relations` | Reviews, member businesses (read-only), tasks | e.g. member relations staff |
 | `admin` | All tools including member business write operations | Full access |
 | `readonly` | Information only | View-only access |
 
