@@ -478,6 +478,12 @@ UPDATE agents SET content = REPLACE(content, 'http://172.17.0.1:8000', 'http://k
 -- Remove legacy single-user user_context (per-user context comes from user_profiles)
 DELETE FROM agents WHERE key = 'user_context';
 
+-- 006: MCP Bridge support — external MCP servers with bearer/header auth
+ALTER TABLE public.mcp_registry ADD COLUMN IF NOT EXISTS auth_type text DEFAULT 'none';
+ALTER TABLE public.mcp_registry ADD COLUMN IF NOT EXISTS auth_token text;
+COMMENT ON COLUMN public.mcp_registry.auth_type IS 'none | bearer | header';
+COMMENT ON COLUMN public.mcp_registry.auth_token IS 'Bearer token or full header value (plaintext, service-role access only)';
+
 MIGRATIONS
 echo "  ✅ Migrations applied"
 
