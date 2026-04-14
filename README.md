@@ -258,8 +258,6 @@ Install pre-built skills from the [dmo-claw-templates](https://github.com/freddy
 
 The Library Manager fetches skill templates from GitHub, imports the workflows into n8n, and registers the new MCP server automatically.
 
-> After installing a skill: **deactivate → reactivate** the new MCP workflow in n8n UI (required due to a webhook registration bug in n8n).
-
 **Available skills:**
 
 | Skill | Category | Description | API Key |

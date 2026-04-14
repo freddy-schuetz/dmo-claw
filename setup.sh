@@ -1456,7 +1456,6 @@ Call tools on MCP servers. Parameters:
 ALWAYS use this when the user wants to build an MCP server or integration.
 NEVER use WorkflowBuilder for MCP servers.
 Parameter: task (description of what the MCP server should do)
-NOTE: After build, manually deactivate + activate in n8n UI (webhook bug).
 
 ## Available MCP Servers:
 - Wetter: {mcp_url}/mcp/wetter (tool: get_weather, param: city)

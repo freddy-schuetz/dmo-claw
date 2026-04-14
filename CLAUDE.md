@@ -118,7 +118,7 @@ MCP servers are **always** built as two workflows:
 
 **Why two workflows?** n8n's `toolCode` node requires `specifyInputSchema: true` for `query.*` to work, but this field is silently ignored when creating workflows via API. The `toolWorkflow` + sub-workflow pattern avoids this bug entirely — parameters arrive via `$json.param` which always works.
 
-After building an MCP server, the user must **deactivate → reactivate** it in the n8n UI. This is a known n8n webhook registration bug with no workaround.
+**Note:** The webhook registration bug (missing `webhookId` on API-created workflows) was fixed in n8n ≥ 2.14.0 (PR #27161). Manual deactivate/reactivate is no longer needed.
 
 ---
 
@@ -203,7 +203,7 @@ The setup script runs in this order:
 
 - **`specifyInputSchema` is ignored on workflow CREATE** — use `toolWorkflow` + sub-workflow instead of `toolCode` for parametrized MCP tools
 - **Postgres credential via API doesn't work** — must be created manually in n8n UI or via `n8n import:credentials` CLI
-- **Webhook registration bug** — after activating a workflow with a webhook via API, it may not register. Fix: deactivate → reactivate in UI
+- **~~Webhook registration bug~~** — fixed in n8n ≥ 2.14.0 (PR #27161). Previously, API-created webhook workflows got no `webhookId`, causing path mismatch. No longer an issue.
 - **`data` field in credentials API must be an object** — not a stringified JSON (except postgres which is the opposite — inconsistent API behavior)
 - **`set -e` in setup.sh** — credential creation blocks use `set +e` to prevent aborts on API errors
 
