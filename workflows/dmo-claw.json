@@ -466,6 +466,34 @@
     },
     {
       "parameters": {
+        "description": "Delete a memory entry by ID. Input: JSON with id (number, required). Always memory_search first to get the ID. Only deletes memories the current user owns (user_id matches sessionId) or org-shared memories (user_id IS NULL). Use when information is wrong, obsolete, or the user explicitly asks to forget something.",
+        "jsCode": "const sessionId = $('Build System Prompt').first().json.sessionId || '';\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {}; }\nconst id = input.id;\nif (!id) return JSON.stringify({ error: 'id is required. Use memory_search first to find the ID.' });\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context — cannot enforce user scope.' });\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\nconst result = await helpers.httpRequest({\n  method: 'DELETE',\n  url: `{{SUPABASE_URL}}/rest/v1/memory_long?id=eq.${id}&${scopeFilter}`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  returnFullResponse: true\n});\nconst body = result.body;\nif (Array.isArray(body) && body.length === 0) return JSON.stringify({ error: `Memory with id ${id} not found, already deleted, or not owned by this user.` });\nreturn JSON.stringify({ success: true, deleted_id: id });"
+      },
+      "id": "tool-memory-delete",
+      "name": "Memory Delete",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2048,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Update an existing memory entry by ID. Input: JSON with id (number, required), and optional fields to update: content (string), category (general/decision/preference/contact/project), importance (1-10), tags (string array), entity_name (string), source (string). Always memory_search first to get the ID. Only updates memories the current user owns (user_id matches sessionId) or org-shared memories (user_id IS NULL).",
+        "jsCode": "async function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nconst sessionId = $('Build System Prompt').first().json.sessionId || '';\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {}; }\nconst id = input.id;\nif (!id) return JSON.stringify({ error: 'id is required. Use memory_search first to find the ID.' });\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context — cannot enforce user scope.' });\nconst patch = {};\nif (input.content) patch.content = input.content;\nif (input.category) patch.category = input.category;\nif (input.importance) patch.importance = input.importance;\nif (input.tags) patch.tags = Array.isArray(input.tags) ? input.tags.map(t => String(t).toLowerCase()) : input.tags;\nif (input.entity_name) patch.entity_name = input.entity_name;\nif (input.source) patch.source = input.source;\nif (Object.keys(patch).length === 0) return JSON.stringify({ error: 'Provide at least one field to update: content, category, importance, tags, entity_name, or source.' });\nif (input.content) {\n  const embedding = await getEmbedding(input.content);\n  if (embedding) patch.embedding = JSON.stringify(embedding);\n}\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\nconst result = await helpers.httpRequest({\n  method: 'PATCH',\n  url: `{{SUPABASE_URL}}/rest/v1/memory_long?id=eq.${id}&${scopeFilter}`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify(patch),\n  returnFullResponse: true\n});\nconst body = result.body;\nif (Array.isArray(body) && body.length === 0) return JSON.stringify({ error: `Memory with id ${id} not found or not owned by this user.` });\nreturn JSON.stringify({ success: true, updated_id: id, fields: Object.keys(patch).filter(k => k !== 'embedding'), vectorized: !!patch.embedding });"
+      },
+      "id": "tool-memory-update",
+      "name": "Memory Update",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2176,
+        336
+      ]
+    },
+    {
+      "parameters": {
         "description": "Make HTTP requests. Input: JSON with url (string), optional method (GET/POST/PATCH/DELETE), optional headers (object), optional body (object for POST/PATCH).",
         "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {url: query}; }\nif (!input.url) return 'Fehler: url ist Pflicht';\nconst opts = {\n  method: input.method || 'GET',\n  url: input.url,\n  headers: input.headers || {}\n};\nif (input.body && ['POST','PATCH','PUT'].includes((input.method||'').toUpperCase())) {\n  opts.body = input.body;\n  if (!opts.headers['Content-Type']) opts.headers['Content-Type'] = 'application/json';\n}\ntry {\n  const result = await helpers.httpRequest(opts);\n  return typeof result === 'string' ? result.substring(0,4000) : JSON.stringify(result).substring(0,4000);\n} catch(e) {\n  return 'HTTP Error: ' + e.message;\n}"
       },
@@ -910,6 +938,28 @@
       ]
     },
     "Memory Save": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory Update": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory Delete": {
       "ai_tool": [
         [
           {
