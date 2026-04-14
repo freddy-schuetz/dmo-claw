@@ -267,7 +267,7 @@
           "cachedResultName": "Claude Sonnet 4.6"
         },
         "options": {
-          "maxTokensToSample": 4096,
+          "maxTokensToSample": 8192,
           "temperature": 0.7
         }
       },
