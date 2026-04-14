@@ -2,7 +2,8 @@
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_ERROR_NOTIFICATION_ID"
   },
   "name": "🧠 Sub-Agent Runner",
   "connections": {

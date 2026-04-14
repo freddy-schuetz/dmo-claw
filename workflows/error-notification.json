@@ -1,0 +1,40 @@
+{
+  "name": "Error Notification",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log workflow error to memory_long via PostgREST.\n// dmo-claw note: no Telegram path — agent retrieves errors via memory_search with category='error'.\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst headers = { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };\n\nconst wf = $json.workflow || {};\nconst exec = $json.execution || {};\nconst err = exec.error || {};\nconst timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);\n\nconst content = `Workflow error in \"${wf.name}\" at ${timestamp} UTC: ${err.message || 'unknown error'}. Failed at node \"${exec.lastNodeExecuted || 'n/a'}\". Execution ${exec.id || 'n/a'}: ${exec.url || 'n/a'}`;\n\nconst metadata = {\n  execution_id: exec.id || null,\n  execution_url: exec.url || null,\n  execution_mode: exec.mode || null,\n  workflow_id: wf.id || null,\n  workflow_name: wf.name || null,\n  node_name: exec.lastNodeExecuted || null,\n  error_name: err.name || null,\n  error_message: err.message || null,\n  error_stack: err.stack ? String(err.stack).slice(0, 2000) : null\n};\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: `${SUPABASE_URL}/rest/v1/memory_long`,\n  headers,\n  body: JSON.stringify({\n    content,\n    category: 'error',\n    importance: 8,\n    tags: ['error', 'workflow-failure', wf.name],\n    entity_name: `workflow:${wf.name}`,\n    metadata\n  })\n});\n\nreturn [{ json: { logged: true, execution_id: exec.id, workflow: wf.name } }];"
+      },
+      "id": "log-error-to-db",
+      "name": "Log Error to memory_long",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Error to memory_long",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

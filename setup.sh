@@ -693,7 +693,7 @@ with open(f, 'w') as fh:
     json.dump(wf, fh, indent=2, ensure_ascii=False)
 " "$out" "${WEBHOOK_AUTH_CRED_ID:-}" "${POSTGRES_CRED_ID:-}" "${ANTHROPIC_CRED_ID:-}"
 done
-IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-save memory-search memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
+IMPORT_ORDER="error-notification mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-save memory-search memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -908,6 +908,35 @@ print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'set
   fi
 fi
 
+# ── 11d. Wire error workflow to critical workflows ──────────
+# Allowed keys in n8n's settings object — anything else triggers "request/body must NOT have additional properties"
+N8N_SETTINGS_WHITELIST="saveExecutionProgress,saveManualExecutions,saveDataErrorExecution,saveDataSuccessExecution,executionTimeout,errorWorkflow,timezone,executionOrder,callerPolicy,callerIds,timeSavedPerExecution,availableInMCP"
+ERROR_WF_ID=${WF_IDS['error-notification']}
+if [ -n "$ERROR_WF_ID" ]; then
+  for target in dmo-claw background-checker sub-agent-runner; do
+    target_id=${WF_IDS[$target]}
+    [ -z "$target_id" ] && continue
+    WF_JSON=$(curl -s "${N8N_BASE}/api/v1/workflows/${target_id}" \
+      -H "X-N8N-API-KEY: ${N8N_API_KEY}")
+    PATCHED_ERR=$(echo "$WF_JSON" | python3 -c "
+import sys, json
+ALLOWED = set('${N8N_SETTINGS_WHITELIST}'.split(','))
+wf = json.load(sys.stdin)
+nodes = wf.get('nodes') or wf.get('activeVersion',{}).get('nodes',[])
+conns = wf.get('connections') or wf.get('activeVersion',{}).get('connections',{})
+settings = {k: v for k, v in wf.get('settings',{}).items() if k in ALLOWED}
+settings['errorWorkflow'] = '${ERROR_WF_ID}'
+print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'settings': settings}))
+" 2>/dev/null)
+    if [ -n "$PATCHED_ERR" ]; then
+      echo "$PATCHED_ERR" | curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${target_id}" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+        -H "Content-Type: application/json" -d @- > /dev/null
+      echo "  ✅ ${target} → error workflow ${ERROR_WF_ID}"
+    fi
+  done
+fi
+
 fi  # end INSTALL_MODE guard for workflows
 
 # ── 12. Activate agent ───────────────────────────────────────
@@ -927,6 +956,14 @@ if [ -n "$AGENT_ID" ]; then
       break
     fi
   done
+fi
+
+# Activate Error Notification workflow (must be active for Error Trigger to fire)
+ERROR_NOTIF_ID=${WF_IDS['error-notification']}
+if [ -n "$ERROR_NOTIF_ID" ]; then
+  curl -s -X POST "${N8N_BASE}/api/v1/workflows/${ERROR_NOTIF_ID}/activate" \
+    -H "X-N8N-API-KEY: ${N8N_API_KEY}" > /dev/null 2>&1
+  echo -e "  ${GREEN}✅ Error Notification workflow activated${NC}"
 fi
 
 # Activate Reminder Runner (polls DB every minute for due reminders)
@@ -1500,7 +1537,42 @@ PREFERENCES (set_preference action):
   * Websuche ("Was sind aktuelle Trends im Alpentourismus?")
 - Respond in the user''s language (check their language preference)
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
-- setup_done will be set to true automatically after your first response — you do not need to do this yourself.')
+- setup_done will be set to true automatically after your first response — you do not need to do this yourself.'),
+
+  ('error_log', 'WORKFLOW ERROR LOG — proactive failure awareness
+
+A global Error Notification workflow catches failures in the main agent, background-checker, and sub-agent-runner. Every failure is logged to memory_long with:
+- category = ''error''
+- importance = 8
+- tags include ''error'', ''workflow-failure'', and the workflow name
+- entity_name = ''workflow:<workflow_name>''
+- content = human-readable summary (workflow name, timestamp, error message, failing node, execution URL)
+- metadata (jsonb) contains execution_id, execution_url, execution_mode, workflow_id, workflow_name, node_name, error_name, error_message and a truncated error_stack
+
+WHEN TO CHECK PROACTIVELY:
+- User asks "ist was schiefgelaufen?", "lief alles?", "hat X funktioniert?", "did anything fail?", "any errors today?"
+- User references a workflow or system component in a doubtful tone ("was the background check ok?")
+- User reports unexpected behavior ("I didn''t get my reminder")
+- Before apologizing or guessing — first check if there''s a logged error that explains it
+
+HOW TO RETRIEVE — CRITICAL, FOLLOW EXACTLY:
+- ALWAYS call memory_search with JSON input and the category filter, NEVER with a free-text question.
+- Correct call: memory_search with input {{"search_query": "error", "category": "error"}}
+- The category filter narrows the search to error rows only. The search_query "error" then matches every error row via fulltext — you will see ALL recent failures.
+- For a specific workflow, use: {{"search_query": "<workflow_name>", "category": "error"}} — e.g. {{"search_query": "background", "category": "error"}}.
+- WHY this rule exists: the fulltext index uses AND-semantics with no stemming. A natural-language query like "error workflow failure recent" requires ALL four tokens to be present in the row — "failure" does NOT match "Failed", and "recent" matches nothing. You will get zero results and falsely conclude nothing failed. DO NOT make this mistake.
+- Do NOT add time words like "today", "last night", "recent" to search_query — they break the match. Filter by created_at mentally after you get the results (they arrive sorted by recency via time decay).
+- If the user asks about a specific period, just fetch errors with {{"search_query": "error", "category": "error"}} and look at created_at in the returned rows.
+
+MULTI-USER SCOPING:
+- Error rows are organization-wide (user_id IS NULL) — every admin sees every failure. This is intentional: operators must be able to debug any user''s failing workflow.
+- Do NOT filter by the current user_id when searching errors.
+
+HOW TO REPORT:
+- Summarize in the user''s language and your own tone — do not dump raw metadata
+- Mention what failed (workflow + node), when (relative time like "heute Nacht um 03:12"), and the error message
+- If the execution URL is present in the content, offer it as a clickable reference
+- Do NOT invent errors — if memory_search returns nothing for the relevant window, say so plainly')
 
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
