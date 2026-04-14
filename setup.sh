@@ -487,6 +487,28 @@ COMMENT ON COLUMN public.mcp_registry.auth_token IS 'Bearer token or full header
 MIGRATIONS
 echo "  ✅ Migrations applied"
 
+# 004: Knowledge System (enriched memory + knowledge graph, multi-user aware)
+echo "  Applying 004_knowledge.sql..."
+KNOWLEDGE_OUTPUT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres \
+  -f supabase/migrations/004_knowledge.sql 2>&1)
+KNOWLEDGE_ERRORS=$(echo "$KNOWLEDGE_OUTPUT" | grep -iE "^(error|fatal)" | head -5)
+if [ -n "$KNOWLEDGE_ERRORS" ]; then
+  echo -e "  ${YELLOW}⚠️  004_knowledge warnings:${NC}"
+  echo "$KNOWLEDGE_ERRORS" | while read line; do echo "    $line"; done
+fi
+echo "  ✅ 004_knowledge applied"
+
+# 005: Hybrid Search (unaccent + tsvector + RRF, filter_user_id mandatory)
+echo "  Applying 005_hybrid_search.sql..."
+HYBRID_OUTPUT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres \
+  -f supabase/migrations/005_hybrid_search.sql 2>&1)
+HYBRID_ERRORS=$(echo "$HYBRID_OUTPUT" | grep -iE "^(error|fatal)" | head -5)
+if [ -n "$HYBRID_ERRORS" ]; then
+  echo -e "  ${YELLOW}⚠️  005_hybrid_search warnings:${NC}"
+  echo "$HYBRID_ERRORS" | while read line; do echo "    $line"; done
+fi
+echo "  ✅ 005_hybrid_search applied"
+
 # Reload PostgREST schema cache so new tables are immediately available via API
 docker kill --signal=SIGUSR1 $(docker ps -q --filter name=rest) 2>/dev/null || true
 
