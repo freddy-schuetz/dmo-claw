@@ -347,18 +347,6 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ output: $json.assistantMessage }) }}"
-      },
-      "id": "route-response",
-      "name": "Route Response",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3432,
-        -16
-      ],
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -378,7 +366,15 @@
           ],
           "combinator": "and"
         }
-      }
+      },
+      "id": "route-response",
+      "name": "Route Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3432,
+        -16
+      ]
     },
     {
       "parameters": {
@@ -747,6 +743,20 @@
       "position": [
         3712,
         208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Manage the knowledge graph — entities (people, companies, projects, places, events, topics) and their relationships. Automatically scoped to the current user (user_id from sessionId); org-shared entities (user_id IS NULL) are visible to everyone.\n\nInput: JSON with action and parameters.\n\nActions:\n- search: Find entities. Optional: query (semantic search), name (text match), type (free text filter, e.g. person/company/project)\n- save: Create entity owned by the current user. Required: name. Optional: entity_type (ALWAYS English lowercase — person, company, project, place, event, topic, product, skill, concept, or anything fitting), summary, metadata\n- update: Update entity (only if owned by user or org-shared). Required: id (UUID). Optional: name, entity_type, summary, metadata\n- relate: Create relationship. Required: source_name, target_name, relation_type (ALWAYS English lowercase — works_at, knows, interested_in, recommended, collaborated_on, lives_in, manages, founded, etc.). Optional: weight (0-1), valid_from, valid_until\n- graph: Get entity network. Required: name. Optional: depth (default 2)\n- delete: Remove entity (only if owned by user or org-shared) and its relations. Required: id (UUID)\n\nExamples:\n{\"action\":\"save\",\"name\":\"Sandra Huber\",\"entity_type\":\"person\",\"summary\":\"Marketing lead Zugspitzregion\"}\n{\"action\":\"relate\",\"source_name\":\"Sandra Huber\",\"target_name\":\"Zugspitzregion\",\"relation_type\":\"works_at\"}\n{\"action\":\"graph\",\"name\":\"Zugspitzregion\",\"depth\":2}\n{\"action\":\"search\",\"query\":\"tourism marketing\",\"type\":\"person\"}",
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\n\n// Multi-user scope: sessionId from Build System Prompt\nconst sessionId = $('Build System Prompt').first().json.sessionId || '';\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context \\u2014 cannot enforce user scope.' });\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\n\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\n// Normalize type strings: lowercase, spaces/hyphens to underscores, trim\nfunction normalize(s) {\n  if (!s) return null;\n  return s.trim().toLowerCase().replace(/\\u00e4/g,'ae').replace(/\\u00f6/g,'oe').replace(/\\u00fc/g,'ue').replace(/\\u00df/g,'ss').replace(/[\\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');\n}\n\nasync function getEmbedding(text) {\n  const cfgResp = await pgrest('GET', '/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled');\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"search|save|update|relate|graph|delete\", ...}'; }\nconst action = input.action;\n\nif (action === 'search') {\n  const body = { match_count: input.limit || 10, filter_user_id: sessionId };\n  if (input.query) {\n    const emb = await getEmbedding(input.query);\n    if (emb) { body.query_embedding = JSON.stringify(emb); body.match_threshold = 0.5; }\n  }\n  if (input.name) body.search_name = input.name;\n  if (input.type) body.filter_type = normalize(input.type);\n  const result = await pgrest('POST', '/rest/v1/rpc/search_entities', body);\n  return JSON.stringify(result);\n\n} else if (action === 'save') {\n  if (!input.name) return 'Error: name is required';\n  // Check if entity already exists (exact name match) within user-or-org scope\n  const existing = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,name,entity_type,summary,user_id`);\n  if (existing && existing.length > 0) return JSON.stringify({ exists: true, entity: existing[0], hint: 'Entity already exists. Use update to modify it.' });\n  const entityType = normalize(input.entity_type);\n  const body = { name: input.name, entity_type: entityType, summary: input.summary || null, metadata: input.metadata || {}, user_id: sessionId };\n  const embText = input.name + (input.summary ? ' ' + input.summary : '');\n  const emb = await getEmbedding(embText);\n  if (emb) body.embedding = JSON.stringify(emb);\n  const result = await pgrest('POST', '/rest/v1/kg_entities', body, { 'Prefer': 'return=representation' });\n  // Return existing types (user-or-org scope) so agent stays consistent\n  const types = await pgrest('GET', `/rest/v1/kg_entities?select=entity_type&entity_type=not.is.null&${scopeFilter}&order=entity_type`);\n  const usedTypes = [...new Set((types || []).map(t => t.entity_type).filter(Boolean))];\n  // Find existing memories about this entity (user-or-org scope)\n  const relatedMemories = await pgrest('GET', `/rest/v1/memory_long?entity_name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,content,category,tags&order=importance.desc&limit=5`);\n  const response = { success: true, entity: Array.isArray(result) ? result[0] : result, existing_entity_types: usedTypes };\n  if (relatedMemories && relatedMemories.length > 0) response.related_memories = relatedMemories;\n  return JSON.stringify(response);\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id (UUID) is required';\n  const patch = {};\n  if (input.name) patch.name = input.name;\n  if (input.entity_type) patch.entity_type = normalize(input.entity_type);\n  if (input.summary !== undefined) patch.summary = input.summary;\n  if (input.metadata) patch.metadata = input.metadata;\n  if (Object.keys(patch).length === 0) return 'Error: provide at least one field to update';\n  // Fetch current row (scoped)\n  if (input.name || input.summary) {\n    const current = await pgrest('GET', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}&select=name,summary`);\n    if (!Array.isArray(current) || current.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n    const e = current[0];\n    const embText = (patch.name || e.name) + ' ' + (patch.summary || e.summary || '');\n    const emb = await getEmbedding(embText);\n    if (emb) patch.embedding = JSON.stringify(emb);\n  }\n  patch.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}`, patch, { 'Prefer': 'return=representation' });\n  if (Array.isArray(result) && result.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n  return JSON.stringify({ success: true, entity: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'relate') {\n  if (!input.source_name || !input.target_name || !input.relation_type) return 'Error: source_name, target_name, and relation_type are required';\n  const relType = normalize(input.relation_type);\n  // Resolve names to IDs within user-or-org scope (prevents cross-user traversal)\n  const srcList = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.source_name)}&${scopeFilter}&select=id,name`);\n  const tgtList = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.target_name)}&${scopeFilter}&select=id,name`);\n  if (!srcList || srcList.length === 0) return `Error: entity \"${input.source_name}\" not found. Save it first with action \"save\".`;\n  if (!tgtList || tgtList.length === 0) return `Error: entity \"${input.target_name}\" not found. Save it first with action \"save\".`;\n  // Check for duplicate relation\n  const dupCheck = await pgrest('GET', `/rest/v1/kg_relations?source_id=eq.${srcList[0].id}&target_id=eq.${tgtList[0].id}&relation_type=eq.${encodeURIComponent(relType)}&valid_until=is.null&select=id`);\n  if (dupCheck && dupCheck.length > 0) return JSON.stringify({ exists: true, relation_id: dupCheck[0].id, hint: 'This relation already exists.' });\n  const body = {\n    source_id: srcList[0].id,\n    target_id: tgtList[0].id,\n    relation_type: relType,\n    weight: input.weight || 1.0,\n    metadata: input.metadata || {}\n  };\n  if (input.valid_from) body.valid_from = input.valid_from;\n  if (input.valid_until) body.valid_until = input.valid_until;\n  const result = await pgrest('POST', '/rest/v1/kg_relations', body, { 'Prefer': 'return=representation' });\n  // Return existing relation types (global \\u2014 relation_type is not user-scoped)\n  const rtypes = await pgrest('GET', '/rest/v1/kg_relations?select=relation_type&order=relation_type');\n  const usedRelTypes = [...new Set((rtypes || []).map(r => r.relation_type).filter(Boolean))];\n  return JSON.stringify({ success: true, relation: Array.isArray(result) ? result[0] : result, existing_relation_types: usedRelTypes });\n\n} else if (action === 'graph') {\n  if (!input.name) return 'Error: name is required';\n  const entities = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,name,entity_type,summary`);\n  if (!entities || entities.length === 0) return `Error: entity \"${input.name}\" not found`;\n  const startEntity = entities[0];\n  const graph = await pgrest('POST', '/rest/v1/rpc/search_entity_graph', { start_id: startEntity.id, max_depth: input.depth || 2, filter_user_id: sessionId });\n  // Include related memories for the center entity (scoped)\n  const memories = await pgrest('GET', `/rest/v1/memory_long?entity_name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,content,category,tags&order=importance.desc&limit=5`);\n  const response = { center: startEntity, connections: graph };\n  if (memories && memories.length > 0) response.related_memories = memories;\n  return JSON.stringify(response);\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id (UUID) is required';\n  const result = await pgrest('DELETE', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}`, null, { 'Prefer': 'return=representation' });\n  if (Array.isArray(result) && result.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n  return JSON.stringify({ success: true, deleted_id: input.id });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: search, save, update, relate, graph, delete';\n}"
+      },
+      "id": "tool-entity-manager",
+      "name": "Entity Manager",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2304,
+        336
       ]
     }
   ],
@@ -1138,6 +1148,17 @@
       ]
     },
     "Project Manager": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entity Manager": {
       "ai_tool": [
         [
           {

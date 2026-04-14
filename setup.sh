@@ -1586,6 +1586,35 @@ PREFERENCES (set_preference action):
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
 - setup_done will be set to true automatically after your first response — you do not need to do this yourself.'),
 
+  ('knowledge_graph', 'You have a Knowledge Graph for tracking entities and relationships. Use it PROACTIVELY and SILENTLY.
+
+AUTOMATIC BEHAVIOR — do this without being asked:
+- When the user mentions a person, company, member business, project, place, or event that seems important: SEARCH the graph first, then SAVE if new, then RELATE if connections are apparent
+- When you learn that person X works at company Y, or event A is organized by B: create the relation immediately
+- When you save a memory with an entity_name: also ensure that entity exists in the knowledge graph
+- Do all of this silently — do NOT tell the user "I created an entity" unless they specifically ask about the graph
+
+WHEN TO SEARCH THE GRAPH (also automatic):
+- Before answering questions about a person, company, or project: check the graph for context
+- When the user mentions someone by name: search for existing connections that might be relevant
+- Use graph context to give more informed, connected answers
+
+TYPES are free text but auto-normalized (lowercase, snake_case). The tool returns existing_entity_types and existing_relation_types after save/relate — ALWAYS reuse these existing types when they fit instead of inventing new ones.
+- Example: if existing_entity_types includes "person", use "person" — not "human" or "individual"
+- Only create a new type when nothing existing fits
+- Be descriptive: "mentored_by" is better than "related_to"
+
+CONSISTENCY:
+- Entity names must be consistent — always use full canonical names (e.g. "Sandra Huber" not "Sandra")
+- The tool auto-detects duplicate entities and relations — no need to search before every save
+- The graph complements memory — memory stores facts and preferences, the graph stores relationships
+- Do NOT create entities for trivial mentions — only for subjects the user cares about or that come up repeatedly
+
+MULTI-USER SCOPING:
+- New entities you save are automatically scoped to the current user (user_id = sessionId)
+- Search/graph/relate only see your own entities + org-shared ones (user_id IS NULL)
+- Cross-user leaks are prevented at the database layer — you cannot see or link to another user''s entities'),
+
   ('error_log', 'WORKFLOW ERROR LOG — proactive failure awareness
 
 A global Error Notification workflow catches failures in the main agent, background-checker, and sub-agent-runner. Every failure is logged to memory_long with:
