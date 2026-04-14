@@ -49,6 +49,18 @@ dmo-claw/
 
 ---
 
+## Multi-User Firmenwissen Isolation
+
+**Every** memory/knowledge RPC in dmo-claw carries a `filter_user_id` parameter
+with `(filter_user_id IS NULL OR row.user_id IS NULL OR row.user_id = filter_user_id)`
+semantics (user-or-org-shared). `hybrid_search_memory` takes it as a **mandatory**
+parameter (no DEFAULT) so a sub-workflow bug can never silently leak across users.
+`kg_entities` has its own `user_id` column; `search_entity_graph` JOINs on
+`kg_entities` on every hop of the recursive CTE to block cross-user traversal.
+
+See [supabase/migrations/004_knowledge.sql](supabase/migrations/004_knowledge.sql)
+and [supabase/migrations/005_hybrid_search.sql](supabase/migrations/005_hybrid_search.sql).
+
 ## Database Schema
 
 The agent reads configuration from PostgreSQL at runtime via PostgREST (`http://172.17.0.1:8000`).
@@ -59,9 +71,11 @@ The agent reads configuration from PostgreSQL at runtime via PostgREST (`http://
 | `agents` | Tool instructions & config | `key`, `content` — loaded into system prompt |
 | `user_profiles` | Per-user data | `user_id`, `display_name`, `context`, `setup_done` |
 | `conversations` | Chat history | `session_id`, `role`, `content`, `created_at` |
-| `memory_long` | Long-term memory | `content`, `category`, `importance`, `embedding` |
-| `memory_daily` | Daily interaction log | `date`, `content`, `role` |
-| `mcp_registry` | Available MCP servers | `server_name`, `path`, `mcp_url`, `tools[]`, `active` |
+| `memory_long` | Long-term memory | `content`, `category`, `importance`, `embedding`, `user_id`, `expires_at`, `tags[]`, `entity_name`, `source`, `search_vector` (GENERATED tsvector) |
+| `memory_daily` | Daily interaction log | `date`, `content`, `role`, `user_id` |
+| `mcp_registry` | Available MCP servers | `server_name`, `path`, `mcp_url`, `tools[]`, `active`, `auth_type`, `auth_token` |
+| `kg_entities` | Knowledge graph entities | `name`, `entity_type`, `summary`, `embedding`, `user_id` (NULL = org-shared) |
+| `kg_relations` | Knowledge graph edges | `source_id`, `target_id`, `relation_type`, `weight`, `valid_from`, `valid_until` (scope inherited from endpoints) |
 
 ### Important: soul + agents are the system prompt
 
@@ -81,14 +95,16 @@ Telegram Trigger
   → Load Conversation History (postgres)
   → Build System Prompt (code node)
   → AI Agent (Claude Sonnet)
-      ├── Memory Search (toolCode)
-      ├── Memory Save (toolCode)
+      ├── Memory Search (toolWorkflow → memory-search, hybrid RRF + fallback)
+      ├── Memory Save (toolWorkflow → memory-save)
+      ├── Memory Update (toolCode, user_or_org scoped)
+      ├── Memory Delete (toolCode, user_or_org scoped)
       ├── HTTP Tool (toolCode)
       ├── Self Modify (toolCode)
-      ├── Reminder (toolWorkflow → ReminderFactory)
+      ├── Reminder (toolWorkflow → ReminderFactory, incl. list/edit/delete)
       ├── WorkflowBuilder (toolWorkflow → WorkflowBuilder)
       ├── MCP Builder (toolWorkflow → MCP Builder)
-      └── MCP Client (toolCode)
+      └── MCP Client (toolCode, incl. Bridge auth)
   → Save Conversation (postgres)
   → Save Daily Log (postgres)
   → Telegram Reply

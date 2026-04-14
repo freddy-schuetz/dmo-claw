@@ -576,6 +576,41 @@ git fetch upstream
 git merge upstream/main
 ```
 
+### v1.3.2 Upstream Sync
+
+Ported from n8n-claw v1.2.x / v1.3.x **with multi-user firmenwissen isolation
+preserved on every new RPC** (Telegram, Discord bridge, unified webhook adapter
+and LLM multi-provider were intentionally excluded — dmo-claw stays OpenWebUI +
+Anthropic-only):
+
+- **Global error workflow** (Telegram strip): errors on the main agent,
+  background checker and sub-agent runner land in `memory_long` with
+  `category='error'`, structured metadata (execution_id, workflow_id, node_name,
+  error_stack), no Telegram
+- **Max output tokens** raised from 4096 to 8192 across all LLM nodes
+- **MCP Bridge** — external MCP servers with bearer/header auth
+  (`mcp_registry.auth_type`, `mcp_registry.auth_token`, bridge install flow in
+  `mcp-library-manager`, auth-aware `MCP Client` tool)
+- **Enriched memory** — new columns on `memory_long`: `tags text[]`,
+  `entity_name text`, `source text`, plus GENERATED `search_vector tsvector`
+  (`simple` config + `immutable_unaccent` wrapper for München ↔ muenchen matching)
+- **Knowledge graph** — `kg_entities` (with `user_id` column), `kg_relations`,
+  `search_entities`, `search_entity_graph` (scope-checked on every hop of the
+  recursive CTE)
+- **Hybrid search** — `hybrid_search_memory` RPC with three-branch RRF fusion
+  (semantic + fulltext + entity) and exponential time decay. `filter_user_id`
+  is a **mandatory** parameter — callers must make an explicit scope decision
+- **Memory Update / Memory Delete** agent tools — both with `user_or_org`
+  scope filters (`or=(user_id.is.null,user_id.eq.${sessionId})`)
+- **Reminder management** — `list_reminders` / `edit_reminder` / `delete_reminder`
+  actions on the reminder factory, all filtered by `user_id=eq.${userId}`
+- **Memory auto-expiry cleanup** — nightly consolidation now also DELETEs rows
+  where `expires_at < now()`
+
+Migrations: [004_knowledge.sql](supabase/migrations/004_knowledge.sql),
+[005_hybrid_search.sql](supabase/migrations/005_hybrid_search.sql),
+[006_mcp_bridge.sql](supabase/migrations/006_mcp_bridge.sql).
+
 ---
 
 ## License
