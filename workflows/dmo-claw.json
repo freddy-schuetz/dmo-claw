@@ -105,7 +105,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT key, content FROM agents ORDER BY key",
+        "query": "SELECT key, content FROM agents WHERE key NOT LIKE 'persona:%' ORDER BY key",
         "options": {
           "queryBatching": "independently"
         }
