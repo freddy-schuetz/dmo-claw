@@ -105,7 +105,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT key, content FROM agents ORDER BY key",
+        "query": "SELECT key, content FROM agents WHERE key NOT LIKE 'persona:%' ORDER BY key",
         "options": {
           "queryBatching": "independently"
         }
@@ -267,7 +267,7 @@
           "cachedResultName": "Claude Sonnet 4.6"
         },
         "options": {
-          "maxTokensToSample": 4096,
+          "maxTokensToSample": 8192,
           "temperature": 0.7
         }
       },
@@ -347,18 +347,6 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ output: $json.assistantMessage }) }}"
-      },
-      "id": "route-response",
-      "name": "Route Response",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3432,
-        -16
-      ],
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -378,7 +366,15 @@
           ],
           "combinator": "and"
         }
-      }
+      },
+      "id": "route-response",
+      "name": "Route Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3432,
+        -16
+      ]
     },
     {
       "parameters": {
@@ -466,6 +462,34 @@
     },
     {
       "parameters": {
+        "description": "Delete a memory entry by ID. Input: JSON with id (number, required). Always memory_search first to get the ID. Only deletes memories the current user owns (user_id matches sessionId) or org-shared memories (user_id IS NULL). Use when information is wrong, obsolete, or the user explicitly asks to forget something.",
+        "jsCode": "const sessionId = $('Build System Prompt').first().json.sessionId || '';\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {}; }\nconst id = input.id;\nif (!id) return JSON.stringify({ error: 'id is required. Use memory_search first to find the ID.' });\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context — cannot enforce user scope.' });\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\nconst result = await helpers.httpRequest({\n  method: 'DELETE',\n  url: `{{SUPABASE_URL}}/rest/v1/memory_long?id=eq.${id}&${scopeFilter}`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  returnFullResponse: true\n});\nconst body = result.body;\nif (Array.isArray(body) && body.length === 0) return JSON.stringify({ error: `Memory with id ${id} not found, already deleted, or not owned by this user.` });\nreturn JSON.stringify({ success: true, deleted_id: id });"
+      },
+      "id": "tool-memory-delete",
+      "name": "Memory Delete",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2048,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Update an existing memory entry by ID. Input: JSON with id (number, required), and optional fields to update: content (string), category (general/decision/preference/contact/project), importance (1-10), tags (string array), entity_name (string), source (string). Always memory_search first to get the ID. Only updates memories the current user owns (user_id matches sessionId) or org-shared memories (user_id IS NULL).",
+        "jsCode": "async function getEmbedding(text) {\n  const cfgResp = await helpers.httpRequest({ method: 'GET', url: '{{SUPABASE_URL}}/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled', headers: { 'apikey': '{{SUPABASE_SERVICE_KEY}}', 'Content-Type': 'application/json' } });\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nconst sessionId = $('Build System Prompt').first().json.sessionId || '';\nlet input;\ntry { input = JSON.parse(query); } catch(e) { input = {}; }\nconst id = input.id;\nif (!id) return JSON.stringify({ error: 'id is required. Use memory_search first to find the ID.' });\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context — cannot enforce user scope.' });\nconst patch = {};\nif (input.content) patch.content = input.content;\nif (input.category) patch.category = input.category;\nif (input.importance) patch.importance = input.importance;\nif (input.tags) patch.tags = Array.isArray(input.tags) ? input.tags.map(t => String(t).toLowerCase()) : input.tags;\nif (input.entity_name) patch.entity_name = input.entity_name;\nif (input.source) patch.source = input.source;\nif (Object.keys(patch).length === 0) return JSON.stringify({ error: 'Provide at least one field to update: content, category, importance, tags, entity_name, or source.' });\nif (input.content) {\n  const embedding = await getEmbedding(input.content);\n  if (embedding) patch.embedding = JSON.stringify(embedding);\n}\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\nconst result = await helpers.httpRequest({\n  method: 'PATCH',\n  url: `{{SUPABASE_URL}}/rest/v1/memory_long?id=eq.${id}&${scopeFilter}`,\n  headers: {\n    'apikey': '{{SUPABASE_SERVICE_KEY}}',\n    'Content-Type': 'application/json',\n    'Prefer': 'return=representation'\n  },\n  body: JSON.stringify(patch),\n  returnFullResponse: true\n});\nconst body = result.body;\nif (Array.isArray(body) && body.length === 0) return JSON.stringify({ error: `Memory with id ${id} not found or not owned by this user.` });\nreturn JSON.stringify({ success: true, updated_id: id, fields: Object.keys(patch).filter(k => k !== 'embedding'), vectorized: !!patch.embedding });"
+      },
+      "id": "tool-memory-update",
+      "name": "Memory Update",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2176,
+        336
+      ]
+    },
+    {
+      "parameters": {
         "description": "Make HTTP requests. Input: JSON with url (string), optional method (GET/POST/PATCH/DELETE), optional headers (object), optional body (object for POST/PATCH).",
         "jsCode": "let input;\ntry { input = JSON.parse(query); } catch(e) { input = {url: query}; }\nif (!input.url) return 'Fehler: url ist Pflicht';\nconst opts = {\n  method: input.method || 'GET',\n  url: input.url,\n  headers: input.headers || {}\n};\nif (input.body && ['POST','PATCH','PUT'].includes((input.method||'').toUpperCase())) {\n  opts.body = input.body;\n  if (!opts.headers['Content-Type']) opts.headers['Content-Type'] = 'application/json';\n}\ntry {\n  const result = await helpers.httpRequest(opts);\n  return typeof result === 'string' ? result.substring(0,4000) : JSON.stringify(result).substring(0,4000);\n} catch(e) {\n  return 'HTTP Error: ' + e.message;\n}"
       },
@@ -508,7 +532,7 @@
     },
     {
       "parameters": {
-        "description": "Set a timed reminder, scheduled task, or recurring action. IMPORTANT: Always include user_id — use the sessionId from the system prompt (format: oi:email@example.com, e.g. oi:friedemann.schuetz@posteo.de). NEVER use display names like 'oi:Petra'.\\nModes:\\n- Reminder (type='reminder'): writes a notification that the agent picks up in the next chat. Use for 'remind me at/in...'.\\n- Task (type='task'): the agent executes the instructions once at the given time and sends the result. Use for 'do X at Y o'clock'.\\n- Recurring (type='recurring'): creates a repeating scheduled action. Extra fields: name (label), instruction (what to do), schedule (object), action_type ('agent_task' or 'briefing', default 'agent_task'), notify_mode ('always' or 'on_change', default 'always'), timezone (default 'Europe/Berlin'). Schedule formats: {\"type\":\"interval\",\"minutes\":30} or {\"type\":\"daily\",\"time\":\"08:00\"} or {\"type\":\"weekly\",\"days\":[1,5],\"time\":\"09:00\"} (1=Mon..7=Sun). notify_mode: 'always' = always send result (use for briefings, reports). 'on_change' = only notify when something NEW is found (use for background monitoring).\\n- Management: action='list' (show all scheduled actions), action='enable'/'disable'/'delete' with target_id (ID of the action to manage).\\nInput for reminder/task: time (ISO 8601), message (text), type, user_id. Input for recurring: see above plus user_id. Input for management: action, target_id, user_id.",
+        "description": "Set a timed reminder, scheduled task, or recurring action. IMPORTANT: Always include user_id — use the sessionId from the system prompt (format: oi:email@example.com, e.g. oi:friedemann.schuetz@posteo.de). NEVER use display names like 'oi:Petra'.\\nModes:\\n- Reminder (type='reminder'): writes a notification that the agent picks up in the next chat. Use for 'remind me at/in...'.\\n- Task (type='task'): the agent executes the instructions once at the given time and sends the result. Use for 'do X at Y o'clock'.\\n- Recurring (type='recurring'): creates a repeating scheduled action. Extra fields: name (label), instruction (what to do), schedule (object), action_type ('agent_task' or 'briefing', default 'agent_task'), notify_mode ('always' or 'on_change', default 'always'), timezone (default 'Europe/Berlin'). Schedule formats: {\"type\":\"interval\",\"minutes\":30} or {\"type\":\"daily\",\"time\":\"08:00\"} or {\"type\":\"weekly\",\"days\":[1,5],\"time\":\"09:00\"} (1=Mon..7=Sun). notify_mode: 'always' = always send result (use for briefings, reports). 'on_change' = only notify when something NEW is found (use for background monitoring).\\n- Management scheduled actions (recurring): action='list' (show all scheduled actions), action='enable'/'disable'/'delete' with target_id (ID of the action to manage).\\n- Management one-time reminders/tasks: action='list_reminders' (show pending one-time reminders + tasks), action='edit_reminder' with target_id and optional fields (time, message, type), action='delete_reminder' with target_id. Use these when the user asks about their reminders/tasks, wants to change the time/text of a reminder, or wants to cancel a reminder.\\nInput for reminder/task: time (ISO 8601), message (text), type, user_id. Input for recurring: see above plus user_id. Input for management: action, target_id, user_id.",
         "workflowId": {
           "__rl": true,
           "value": "REPLACE_REMINDER_FACTORY_ID",
@@ -561,7 +585,7 @@
     {
       "parameters": {
         "name": "mcp_builder",
-        "description": "Builds a new MCP Server workflow in n8n. ALWAYS use this when the user wants to build an MCP server, MCP tool, or API integration as MCP. NEVER use WorkflowBuilder for MCP. On error: report the error, do NOT fall back to WorkflowBuilder. Input: JSON with 'task' (description of what the server should do). After build: user must deactivate + reactivate the workflow in n8n UI (webhook registration bug).",
+        "description": "Builds a new MCP Server workflow in n8n. ALWAYS use this when the user wants to build an MCP server, MCP tool, or API integration as MCP. NEVER use WorkflowBuilder for MCP. On error: report the error, do NOT fall back to WorkflowBuilder. Input: JSON with 'task' (description of what the server should do).",
         "workflowId": {
           "__rl": true,
           "value": "REPLACE_MCP_BUILDER_ID",
@@ -588,7 +612,7 @@
     {
       "parameters": {
         "description": "Calls a tool on an MCP server. Use when the user asks something that an available MCP server can answer (weather, book lookup, etc.). Required parameters: mcp_url (server URL), tool_name (tool to call), arguments (JSON object with parameters). Check mcp_registry table for available servers and their tools.",
-        "jsCode": "// Debug: figure out what query actually is\nconst qType = typeof query;\nlet mcpUrl = '', toolName = '', args = {};\n\nif (qType === 'object' && query !== null) {\n  // query is already an object\n  mcpUrl = query.mcp_url || '';\n  toolName = query.tool_name || '';\n  args = query.arguments || {};\n} else if (qType === 'string') {\n  try {\n    const parsed = JSON.parse(query);\n    mcpUrl = parsed.mcp_url || '';\n    toolName = parsed.tool_name || '';\n    args = parsed.arguments || {};\n  } catch(e) {\n    return 'Parse error: query=' + String(query).substring(0,200) + ' type=' + qType;\n  }\n} else {\n  return 'Unexpected query type: ' + qType + ' value: ' + String(query).substring(0,200);\n}\n\nif (typeof args === 'string') try { args = JSON.parse(args); } catch(e) {}\nif (!mcpUrl || !toolName) return 'Fehler: mcp_url=' + mcpUrl + ' tool_name=' + toolName + ' (query type was: ' + qType + ')';\n\ntry {\n  // 1. Initialize\n  const init = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream'},\n    body: JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'dmo-claw-mcp',version:'1.0'}}}),\n    returnFullResponse: true, encoding: 'utf-8', json: false\n  });\n  const sid = init.headers && init.headers['mcp-session-id'];\n  if (!sid) return 'MCP: Kein session-id. Body: ' + String(init.body||init).substring(0,200);\n\n  // 2. Initialized\n  await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'}),\n    json: false\n  });\n\n  // 3. Call tool\n  const resp = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: {'Content-Type':'application/json','Accept':'application/json, text/event-stream','mcp-session-id':sid},\n    body: JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:toolName,arguments:args}}),\n    json: false\n  });\n\n  const bodyStr = String(resp);\n  const dataLine = bodyStr.split('\\n').find(l => l.startsWith('data: '));\n  if (!dataLine) return 'MCP: Keine Daten. Response: ' + bodyStr.substring(0,200);\n  const result = JSON.parse(dataLine.substring(6));\n  if (result.error) return 'MCP Error: ' + JSON.stringify(result.error);\n  return result.result?.content?.[0]?.text || JSON.stringify(result.result);\n} catch(e) {\n  return 'MCP Error: ' + e.message;\n}"
+        "jsCode": "const qType = typeof query;\nlet mcpUrl = '', toolName = '', args = {};\n\nif (qType === 'object' && query !== null) {\n  mcpUrl = query.mcp_url || '';\n  toolName = query.tool_name || '';\n  args = query.arguments || {};\n} else if (qType === 'string') {\n  try {\n    const parsed = JSON.parse(query);\n    mcpUrl = parsed.mcp_url || '';\n    toolName = parsed.tool_name || '';\n    args = parsed.arguments || {};\n  } catch(e) {\n    return 'Parse error: query=' + String(query).substring(0,200) + ' type=' + qType;\n  }\n} else {\n  return 'Unexpected query type: ' + qType + ' value: ' + String(query).substring(0,200);\n}\n\nif (typeof args === 'string') try { args = JSON.parse(args); } catch(e) {}\nif (!mcpUrl || !toolName) return 'Fehler: mcp_url=' + mcpUrl + ' tool_name=' + toolName + ' (query type was: ' + qType + ')';\n\nfunction parseSSE(raw) {\n  const str = String(raw);\n  let lines = str.split('\\n');\n  if (lines.length <= 1) lines = str.split('\\\\n');\n  for (let i = lines.length - 1; i >= 0; i--) {\n    const line = lines[i].trim();\n    if (line.startsWith('data: ')) {\n      return JSON.parse(line.substring(6));\n    }\n  }\n  return null;\n}\n\ntry {\n  let authHeader = null;\n  try {\n    const row = await helpers.httpRequest({method:'GET',url:'{{SUPABASE_URL}}/rest/v1/mcp_registry?mcp_url=eq.'+encodeURIComponent(mcpUrl)+'&select=auth_type,auth_token&limit=1',headers:{apikey:'{{SUPABASE_SERVICE_KEY}}',Authorization:'Bearer {{SUPABASE_SERVICE_KEY}}'},json:true});\n    if (row && row[0] && row[0].auth_type && row[0].auth_type !== 'none' && row[0].auth_token) {\n      authHeader = row[0].auth_type === 'bearer' ? 'Bearer '+row[0].auth_token : row[0].auth_token;\n    }\n  } catch(e) {}\n\n  const hdrs = {'Content-Type':'application/json','Accept':'application/json, text/event-stream'};\n  if (authHeader) hdrs['Authorization'] = authHeader;\n\n  // 1. Initialize\n  const init = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: hdrs,\n    body: JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'n8n-claw-mcp',version:'1.0'}}}),\n    returnFullResponse: true, encoding: 'utf-8', json: false\n  });\n  const sid = init.headers && init.headers['mcp-session-id'];\n  if (sid) hdrs['mcp-session-id'] = sid;\n\n  // 2. Initialized notification\n  await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: hdrs,\n    body: JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'}),\n    json: false\n  });\n\n  // 3. List tools to get schemas (auto-fill missing required params)\n  const listResp = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: hdrs,\n    body: JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list',params:{}}),\n    json: false\n  });\n  const listResult = parseSSE(listResp);\n  let toolSchema = null;\n  if (listResult && listResult.result && listResult.result.tools) {\n    const tool = listResult.result.tools.find(t => t.name === toolName);\n    if (tool && tool.inputSchema) toolSchema = tool.inputSchema;\n  }\n\n  function schemaHint(problem) {\n    if (!toolSchema) return null;\n    return 'Tool \"' + toolName + '\" call rejected: ' + problem +\n      '\\n\\nCorrect input schema:\\n' + JSON.stringify(toolSchema, null, 2) +\n      '\\n\\nRetry the tool call with parameter names matching this schema exactly.';\n  }\n\n  if (toolSchema && toolSchema.properties) {\n    const allowed = Object.keys(toolSchema.properties);\n    const required = toolSchema.required || [];\n    const unknown = Object.keys(args).filter(k => !allowed.includes(k));\n    const missing = required.filter(r => args[r] === undefined || args[r] === null || args[r] === '');\n    if (unknown.length > 0 || missing.length > 0) {\n      const problems = [];\n      if (unknown.length > 0) problems.push('unknown args [' + unknown.join(', ') + ']');\n      if (missing.length > 0) problems.push('missing required args [' + missing.join(', ') + ']');\n      return schemaHint(problems.join('; '));\n    }\n  }\n\n  const resp = await helpers.httpRequest({\n    method: 'POST', url: mcpUrl,\n    headers: hdrs,\n    body: JSON.stringify({jsonrpc:'2.0',id:3,method:'tools/call',params:{name:toolName,arguments:args}}),\n    returnFullResponse: true, encoding: 'utf-8', json: false\n  });\n\n  const result = parseSSE(resp.body || resp);\n  if (!result) return String(resp.body || resp);\n  if (result.error) {\n    return schemaHint('server error: ' + JSON.stringify(result.error)) || ('MCP Error: ' + JSON.stringify(result.error));\n  }\n  if (result.result && result.result.isError) {\n    const errText = (result.result.content && result.result.content[0] && result.result.content[0].text) || JSON.stringify(result.result);\n    return schemaHint('tool returned error: ' + errText) || ('MCP Tool Error: ' + errText);\n  }\n  return result.result?.content?.[0]?.text || JSON.stringify(result.result);\n} catch(e) {\n  return 'MCP Error: ' + e.message;\n}"
       },
       "id": "mcp-client-code",
       "name": "MCP Client",
@@ -719,6 +743,20 @@
       "position": [
         3712,
         208
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Manage the knowledge graph — entities (people, companies, projects, places, events, topics) and their relationships. Entities can be personal (scope='user', default) or organization-shared (scope='org'). Every search automatically returns both your own entities AND org-shared ones.\n\nInput: JSON with action and parameters.\n\nActions:\n- search: Find entities. Optional: query (semantic search), name (text match), type (free text filter, e.g. person/company/project)\n- save: Create entity. Required: name. Optional: entity_type (ALWAYS English lowercase — person, company, project, place, event, topic, product, skill, concept, or anything fitting), summary, metadata, scope ('user' DEFAULT = personal to you, 'org' = shared with the whole team — use for colleagues, member businesses, DMO facts, regional info)\n- update: Update entity (only if owned by user or org-shared). Required: id (UUID). Optional: name, entity_type, summary, metadata, scope (to promote user→org or demote org→user)\n- relate: Create relationship. Required: source_name, target_name, relation_type (ALWAYS English lowercase — works_at, knows, interested_in, recommended, collaborated_on, lives_in, manages, founded, etc.). Optional: weight (0-1), valid_from, valid_until\n- graph: Get entity network. Required: name. Optional: depth (default 2)\n- delete: Remove entity (only if owned by user or org-shared) and its relations. Required: id (UUID)\n\nSCOPE RULE: Default to 'user'. Use scope='org' when the entity is clearly team knowledge: colleagues (DMO staff), member businesses, regional facts, destination events, shared projects. If in doubt → user.\n\nExamples:\n{\"action\":\"save\",\"name\":\"Sandra Huber\",\"entity_type\":\"person\",\"summary\":\"Marketing-Lead Zugspitzregion\",\"scope\":\"org\"}\n{\"action\":\"save\",\"name\":\"Mein Zahnarzt Dr. Weber\",\"entity_type\":\"person\",\"scope\":\"user\"}\n{\"action\":\"relate\",\"source_name\":\"Sandra Huber\",\"target_name\":\"Zugspitzregion\",\"relation_type\":\"works_at\"}\n{\"action\":\"graph\",\"name\":\"Zugspitzregion\",\"depth\":2}\n{\"action\":\"search\",\"query\":\"tourism marketing\",\"type\":\"person\"}",
+        "jsCode": "const SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\n\n// Multi-user scope: sessionId from Build System Prompt\nconst sessionId = $('Build System Prompt').first().json.sessionId || '';\nif (!sessionId) return JSON.stringify({ error: 'sessionId missing from context \\u2014 cannot enforce user scope.' });\nconst scopeFilter = `or=(user_id.is.null,user_id.eq.${encodeURIComponent(sessionId)})`;\n\n// Helper: resolve scope string to user_id value ('user' -> sessionId, 'org' -> null)\nfunction resolveUserId(scope) {\n  const s = (scope || 'user').toLowerCase();\n  return s === 'org' ? null : sessionId;\n}\n\nasync function pgrest(method, path, body, extraHeaders = {}) {\n  const opts = {\n    method,\n    url: `${SUPABASE_URL}${path}`,\n    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json', ...extraHeaders },\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  };\n  if (body) opts.body = JSON.stringify(body);\n  const res = await helpers.httpRequest(opts);\n  if (!res.body || res.body === '') return null;\n  return typeof res.body === 'string' ? JSON.parse(res.body) : res.body;\n}\n\n// Normalize type strings: lowercase, spaces/hyphens to underscores, trim\nfunction normalize(s) {\n  if (!s) return null;\n  return s.trim().toLowerCase().replace(/\\u00e4/g,'ae').replace(/\\u00f6/g,'oe').replace(/\\u00fc/g,'ue').replace(/\\u00df/g,'ss').replace(/[\\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');\n}\n\nasync function getEmbedding(text) {\n  const cfgResp = await pgrest('GET', '/rest/v1/tools_config?tool_name=eq.embedding&select=config,enabled');\n  const cfg = (Array.isArray(cfgResp) && cfgResp.length > 0 && cfgResp[0].enabled) ? cfgResp[0].config : null;\n  if (!cfg || !cfg.api_key) return null;\n  const provider = cfg.provider || 'openai';\n  const apiKey = cfg.api_key;\n  const model = cfg.model || 'text-embedding-3-small';\n  try {\n    if (provider === 'openai') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.openai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, input: text }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'voyage') {\n      const res = await helpers.httpRequest({ method: 'POST', url: 'https://api.voyageai.com/v1/embeddings', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'voyage-3-lite', input: [text] }) });\n      return res.data[0].embedding;\n    }\n    if (provider === 'ollama') {\n      const ollamaUrl = cfg.ollama_url || 'http://localhost:11434';\n      const res = await helpers.httpRequest({ method: 'POST', url: `${ollamaUrl}/api/embed`, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'nomic-embed-text', input: text }) });\n      return res.embeddings[0];\n    }\n  } catch(e) { return null; }\n  return null;\n}\n\nlet input;\ntry { input = JSON.parse(query); } catch(e) { return 'Error: invalid JSON. Expected: {\"action\":\"search|save|update|relate|graph|delete\", ...}'; }\nconst action = input.action;\n\nif (action === 'search') {\n  const body = { match_count: input.limit || 10, filter_user_id: sessionId };\n  if (input.query) {\n    const emb = await getEmbedding(input.query);\n    if (emb) { body.query_embedding = JSON.stringify(emb); body.match_threshold = 0.5; }\n  }\n  if (input.name) body.search_name = input.name;\n  if (input.type) body.filter_type = normalize(input.type);\n  const result = await pgrest('POST', '/rest/v1/rpc/search_entities', body);\n  return JSON.stringify(result);\n\n} else if (action === 'save') {\n  if (!input.name) return 'Error: name is required';\n  // Check if entity already exists (exact name match) within user-or-org scope\n  const existing = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,name,entity_type,summary,user_id`);\n  if (existing && existing.length > 0) return JSON.stringify({ exists: true, entity: existing[0], hint: 'Entity already exists. Use update to modify it.' });\n  const entityType = normalize(input.entity_type);\n  const entityUserId = resolveUserId(input.scope);\n  const body = { name: input.name, entity_type: entityType, summary: input.summary || null, metadata: input.metadata || {}, user_id: entityUserId };\n  const embText = input.name + (input.summary ? ' ' + input.summary : '');\n  const emb = await getEmbedding(embText);\n  if (emb) body.embedding = JSON.stringify(emb);\n  const result = await pgrest('POST', '/rest/v1/kg_entities', body, { 'Prefer': 'return=representation' });\n  // Return existing types (user-or-org scope) so agent stays consistent\n  const types = await pgrest('GET', `/rest/v1/kg_entities?select=entity_type&entity_type=not.is.null&${scopeFilter}&order=entity_type`);\n  const usedTypes = [...new Set((types || []).map(t => t.entity_type).filter(Boolean))];\n  // Find existing memories about this entity (user-or-org scope)\n  const relatedMemories = await pgrest('GET', `/rest/v1/memory_long?entity_name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,content,category,tags&order=importance.desc&limit=5`);\n  const response = { success: true, entity: Array.isArray(result) ? result[0] : result, existing_entity_types: usedTypes };\n  if (relatedMemories && relatedMemories.length > 0) response.related_memories = relatedMemories;\n  return JSON.stringify(response);\n\n} else if (action === 'update') {\n  if (!input.id) return 'Error: id (UUID) is required';\n  const patch = {};\n  if (input.name) patch.name = input.name;\n  if (input.entity_type) patch.entity_type = normalize(input.entity_type);\n  if (input.summary !== undefined) patch.summary = input.summary;\n  if (input.metadata) patch.metadata = input.metadata;\n  if (input.scope) patch.user_id = resolveUserId(input.scope);\n  if (Object.keys(patch).length === 0) return 'Error: provide at least one field to update';\n  // Fetch current row (scoped)\n  if (input.name || input.summary) {\n    const current = await pgrest('GET', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}&select=name,summary`);\n    if (!Array.isArray(current) || current.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n    const e = current[0];\n    const embText = (patch.name || e.name) + ' ' + (patch.summary || e.summary || '');\n    const emb = await getEmbedding(embText);\n    if (emb) patch.embedding = JSON.stringify(emb);\n  }\n  patch.updated_at = new Date().toISOString();\n  const result = await pgrest('PATCH', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}`, patch, { 'Prefer': 'return=representation' });\n  if (Array.isArray(result) && result.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n  return JSON.stringify({ success: true, entity: Array.isArray(result) ? result[0] : result });\n\n} else if (action === 'relate') {\n  if (!input.source_name || !input.target_name || !input.relation_type) return 'Error: source_name, target_name, and relation_type are required';\n  const relType = normalize(input.relation_type);\n  // Resolve names to IDs within user-or-org scope (prevents cross-user traversal)\n  const srcList = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.source_name)}&${scopeFilter}&select=id,name`);\n  const tgtList = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.target_name)}&${scopeFilter}&select=id,name`);\n  if (!srcList || srcList.length === 0) return `Error: entity \"${input.source_name}\" not found. Save it first with action \"save\".`;\n  if (!tgtList || tgtList.length === 0) return `Error: entity \"${input.target_name}\" not found. Save it first with action \"save\".`;\n  // Check for duplicate relation\n  const dupCheck = await pgrest('GET', `/rest/v1/kg_relations?source_id=eq.${srcList[0].id}&target_id=eq.${tgtList[0].id}&relation_type=eq.${encodeURIComponent(relType)}&valid_until=is.null&select=id`);\n  if (dupCheck && dupCheck.length > 0) return JSON.stringify({ exists: true, relation_id: dupCheck[0].id, hint: 'This relation already exists.' });\n  const body = {\n    source_id: srcList[0].id,\n    target_id: tgtList[0].id,\n    relation_type: relType,\n    weight: input.weight || 1.0,\n    metadata: input.metadata || {}\n  };\n  if (input.valid_from) body.valid_from = input.valid_from;\n  if (input.valid_until) body.valid_until = input.valid_until;\n  const result = await pgrest('POST', '/rest/v1/kg_relations', body, { 'Prefer': 'return=representation' });\n  // Return existing relation types (global \\u2014 relation_type is not user-scoped)\n  const rtypes = await pgrest('GET', '/rest/v1/kg_relations?select=relation_type&order=relation_type');\n  const usedRelTypes = [...new Set((rtypes || []).map(r => r.relation_type).filter(Boolean))];\n  return JSON.stringify({ success: true, relation: Array.isArray(result) ? result[0] : result, existing_relation_types: usedRelTypes });\n\n} else if (action === 'graph') {\n  if (!input.name) return 'Error: name is required';\n  const entities = await pgrest('GET', `/rest/v1/kg_entities?name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,name,entity_type,summary`);\n  if (!entities || entities.length === 0) return `Error: entity \"${input.name}\" not found`;\n  const startEntity = entities[0];\n  const graph = await pgrest('POST', '/rest/v1/rpc/search_entity_graph', { start_id: startEntity.id, max_depth: input.depth || 2, filter_user_id: sessionId });\n  // Include related memories for the center entity (scoped)\n  const memories = await pgrest('GET', `/rest/v1/memory_long?entity_name=ilike.${encodeURIComponent(input.name)}&${scopeFilter}&select=id,content,category,tags&order=importance.desc&limit=5`);\n  const response = { center: startEntity, connections: graph };\n  if (memories && memories.length > 0) response.related_memories = memories;\n  return JSON.stringify(response);\n\n} else if (action === 'delete') {\n  if (!input.id) return 'Error: id (UUID) is required';\n  const result = await pgrest('DELETE', `/rest/v1/kg_entities?id=eq.${input.id}&${scopeFilter}`, null, { 'Prefer': 'return=representation' });\n  if (Array.isArray(result) && result.length === 0) return JSON.stringify({ error: `Entity ${input.id} not found or not owned by this user.` });\n  return JSON.stringify({ success: true, deleted_id: input.id });\n\n} else {\n  return 'Error: unknown action \"' + action + '\". Use: search, save, update, relate, graph, delete';\n}"
+      },
+      "id": "tool-entity-manager",
+      "name": "Entity Manager",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [
+        2304,
+        336
       ]
     }
   ],
@@ -920,6 +958,28 @@
         ]
       ]
     },
+    "Memory Update": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory Delete": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Route Response": {
       "main": [
         [
@@ -1097,11 +1157,23 @@
           }
         ]
       ]
+    },
+    "Entity Manager": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_ERROR_NOTIFICATION_ID"
   }
 }

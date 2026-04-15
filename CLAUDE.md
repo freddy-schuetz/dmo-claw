@@ -49,6 +49,36 @@ dmo-claw/
 
 ---
 
+## Multi-User Firmenwissen Isolation
+
+**Every** memory/knowledge RPC in dmo-claw carries a `filter_user_id` parameter
+with `(filter_user_id IS NULL OR row.user_id IS NULL OR row.user_id = filter_user_id)`
+semantics (user-or-org-shared). `hybrid_search_memory` takes it as a **mandatory**
+parameter (no DEFAULT) so a sub-workflow bug can never silently leak across users.
+`kg_entities` has its own `user_id` column; `search_entity_graph` JOINs on
+`kg_entities` on every hop of the recursive CTE to block cross-user traversal.
+
+See [supabase/migrations/004_knowledge.sql](supabase/migrations/004_knowledge.sql)
+and [supabase/migrations/005_hybrid_search.sql](supabase/migrations/005_hybrid_search.sql).
+
+### Scope: `user` vs `org`
+
+Both `memory_save` and the Entity Manager tool accept a `scope` parameter:
+- `scope="user"` (default) → row gets `user_id = sessionId`, visible only to that user
+- `scope="org"` → row gets `user_id = NULL`, visible to the entire DMO team
+
+Use `org` for team knowledge (colleagues, member businesses, regional facts,
+destination events, shared projects). Default `user` for everything personal.
+The `knowledge_graph` agent prompt in the `agents` table teaches the agent
+when to pick which.
+
+### Static agents config vs persona rows
+
+`setup.sh` **always** re-seeds the `agents` table on `--force` (no gate on
+"keep current personality"). Rationale: `agents` rows are static tool config
+and must stay in sync with shipped code. The `soul` table is the personality
+source and is the only thing the "keep current" prompt actually protects.
+
 ## Database Schema
 
 The agent reads configuration from PostgreSQL at runtime via PostgREST (`http://172.17.0.1:8000`).
@@ -59,9 +89,11 @@ The agent reads configuration from PostgreSQL at runtime via PostgREST (`http://
 | `agents` | Tool instructions & config | `key`, `content` — loaded into system prompt |
 | `user_profiles` | Per-user data | `user_id`, `display_name`, `context`, `setup_done` |
 | `conversations` | Chat history | `session_id`, `role`, `content`, `created_at` |
-| `memory_long` | Long-term memory | `content`, `category`, `importance`, `embedding` |
-| `memory_daily` | Daily interaction log | `date`, `content`, `role` |
-| `mcp_registry` | Available MCP servers | `server_name`, `path`, `mcp_url`, `tools[]`, `active` |
+| `memory_long` | Long-term memory | `content`, `category`, `importance`, `embedding`, `user_id`, `expires_at`, `tags[]`, `entity_name`, `source`, `search_vector` (GENERATED tsvector) |
+| `memory_daily` | Daily interaction log | `date`, `content`, `role`, `user_id` |
+| `mcp_registry` | Available MCP servers | `server_name`, `path`, `mcp_url`, `tools[]`, `active`, `auth_type`, `auth_token` |
+| `kg_entities` | Knowledge graph entities | `name`, `entity_type`, `summary`, `embedding`, `user_id` (NULL = org-shared) |
+| `kg_relations` | Knowledge graph edges | `source_id`, `target_id`, `relation_type`, `weight`, `valid_from`, `valid_until` (scope inherited from endpoints) |
 
 ### Important: soul + agents are the system prompt
 
@@ -81,14 +113,17 @@ Telegram Trigger
   → Load Conversation History (postgres)
   → Build System Prompt (code node)
   → AI Agent (Claude Sonnet)
-      ├── Memory Search (toolCode)
-      ├── Memory Save (toolCode)
+      ├── Memory Search (toolWorkflow → memory-search, hybrid RRF + fallback)
+      ├── Memory Save (toolWorkflow → memory-save)
+      ├── Memory Update (toolCode, user_or_org scoped)
+      ├── Memory Delete (toolCode, user_or_org scoped)
+      ├── Entity Manager (toolCode, KG search/save/update/relate/graph/delete, scope user|org)
       ├── HTTP Tool (toolCode)
       ├── Self Modify (toolCode)
-      ├── Reminder (toolWorkflow → ReminderFactory)
+      ├── Reminder (toolWorkflow → ReminderFactory, incl. list/edit/delete)
       ├── WorkflowBuilder (toolWorkflow → WorkflowBuilder)
       ├── MCP Builder (toolWorkflow → MCP Builder)
-      └── MCP Client (toolCode)
+      └── MCP Client (toolCode, incl. Bridge auth)
   → Save Conversation (postgres)
   → Save Daily Log (postgres)
   → Telegram Reply
@@ -102,7 +137,7 @@ MCP servers are **always** built as two workflows:
 
 **Why two workflows?** n8n's `toolCode` node requires `specifyInputSchema: true` for `query.*` to work, but this field is silently ignored when creating workflows via API. The `toolWorkflow` + sub-workflow pattern avoids this bug entirely — parameters arrive via `$json.param` which always works.
 
-After building an MCP server, the user must **deactivate → reactivate** it in the n8n UI. This is a known n8n webhook registration bug with no workaround.
+**Note:** The webhook registration bug (missing `webhookId` on API-created workflows) was fixed in n8n ≥ 2.14.0 (PR #27161). Manual deactivate/reactivate is no longer needed.
 
 ---
 
@@ -187,7 +222,7 @@ The setup script runs in this order:
 
 - **`specifyInputSchema` is ignored on workflow CREATE** — use `toolWorkflow` + sub-workflow instead of `toolCode` for parametrized MCP tools
 - **Postgres credential via API doesn't work** — must be created manually in n8n UI or via `n8n import:credentials` CLI
-- **Webhook registration bug** — after activating a workflow with a webhook via API, it may not register. Fix: deactivate → reactivate in UI
+- **~~Webhook registration bug~~** — fixed in n8n ≥ 2.14.0 (PR #27161). Previously, API-created webhook workflows got no `webhookId`, causing path mismatch. No longer an issue.
 - **`data` field in credentials API must be an object** — not a stringified JSON (except postgres which is the opposite — inconsistent API behavior)
 - **`set -e` in setup.sh** — credential creation blocks use `set +e` to prevent aborts on API errors
 

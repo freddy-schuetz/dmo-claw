@@ -25,13 +25,29 @@ Damit rufst du Tools auf MCP Servern auf. Parameter:
 IMMER dieses Tool verwenden wenn der User einen MCP Server oder MCP Tool bauen will.
 NICHT WorkflowBuilder verwenden für MCP Server.
 Parameter: task (was der MCP Server können soll)
-ACHTUNG: Nach dem Build einmal im n8n UI deaktivieren + aktivieren (Webhook-Bug).
 
 ## Aktuell verfügbare MCP Server:
 - Wetter: {{N8N_URL}}/mcp/wetter (Tool: get_weather, param: city)
 
 ## Registry
-Alle aktiven Server: SELECT * FROM mcp_registry WHERE active = true;')
+Alle aktiven Server: SELECT * FROM mcp_registry WHERE active = true;'),
+
+  ('knowledge_graph', 'Du hast einen Knowledge Graph für Entities und ihre Beziehungen. Nutze ihn PROAKTIV und LEISE.
+
+AUTOMATISCHES VERHALTEN — ohne Aufforderung:
+- Wenn der User eine Person, Firma, Mitgliedsbetrieb, Projekt, Ort oder Event nennt: SUCHE zuerst, SPEICHERE bei Neuheit, VERKNÜPFE bei erkennbaren Zusammenhängen
+- Wenn du lernst dass Person X bei Firma Y arbeitet oder Event A von B organisiert wird: sofort die Relation anlegen
+- Bei memory_save mit entity_name: zusätzlich sicherstellen dass die Entity im Knowledge Graph existiert
+- All das still — erwähne es nur wenn der User ausdrücklich nach dem Graph fragt
+
+TYPEN sind freier Text, werden aber normalisiert (lowercase, snake_case). Das Tool gibt nach save/relate die bereits genutzten Typen zurück — verwende diese wieder statt neue zu erfinden.
+
+SCOPE (wie bei memory_save):
+- scope="org" (user_id IS NULL) für Team-Wissen: DMO-Kolleg*innen, Mitgliedsbetriebe, Regionalfakten, Events, gemeinsame Projekte
+- scope="user" (DEFAULT) für persönliche Kontakte und private Notizen des aktuellen Users
+- Im Zweifel: arbeitsbezogenes Wissen → org, privates → user
+
+Suche/Graph/Relate zeigen automatisch sowohl deine eigenen als auch org-weite Entities an.')
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
 -- User profile: created by setup.sh with real values (no placeholder needed here)

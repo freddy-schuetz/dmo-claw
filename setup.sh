@@ -478,8 +478,36 @@ UPDATE agents SET content = REPLACE(content, 'http://172.17.0.1:8000', 'http://k
 -- Remove legacy single-user user_context (per-user context comes from user_profiles)
 DELETE FROM agents WHERE key = 'user_context';
 
+-- 006: MCP Bridge support — external MCP servers with bearer/header auth
+ALTER TABLE public.mcp_registry ADD COLUMN IF NOT EXISTS auth_type text DEFAULT 'none';
+ALTER TABLE public.mcp_registry ADD COLUMN IF NOT EXISTS auth_token text;
+COMMENT ON COLUMN public.mcp_registry.auth_type IS 'none | bearer | header';
+COMMENT ON COLUMN public.mcp_registry.auth_token IS 'Bearer token or full header value (plaintext, service-role access only)';
+
 MIGRATIONS
 echo "  ✅ Migrations applied"
+
+# 004: Knowledge System (enriched memory + knowledge graph, multi-user aware)
+echo "  Applying 004_knowledge.sql..."
+KNOWLEDGE_OUTPUT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres \
+  -f supabase/migrations/004_knowledge.sql 2>&1)
+KNOWLEDGE_ERRORS=$(echo "$KNOWLEDGE_OUTPUT" | grep -iE "^(error|fatal)" | head -5)
+if [ -n "$KNOWLEDGE_ERRORS" ]; then
+  echo -e "  ${YELLOW}⚠️  004_knowledge warnings:${NC}"
+  echo "$KNOWLEDGE_ERRORS" | while read line; do echo "    $line"; done
+fi
+echo "  ✅ 004_knowledge applied"
+
+# 005: Hybrid Search (unaccent + tsvector + RRF, filter_user_id mandatory)
+echo "  Applying 005_hybrid_search.sql..."
+HYBRID_OUTPUT=$(LANG=C LC_ALL=C PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres \
+  -f supabase/migrations/005_hybrid_search.sql 2>&1)
+HYBRID_ERRORS=$(echo "$HYBRID_OUTPUT" | grep -iE "^(error|fatal)" | head -5)
+if [ -n "$HYBRID_ERRORS" ]; then
+  echo -e "  ${YELLOW}⚠️  005_hybrid_search warnings:${NC}"
+  echo "$HYBRID_ERRORS" | while read line; do echo "    $line"; done
+fi
+echo "  ✅ 005_hybrid_search applied"
 
 # Reload PostgREST schema cache so new tables are immediately available via API
 docker kill --signal=SIGUSR1 $(docker ps -q --filter name=rest) 2>/dev/null || true
@@ -693,7 +721,7 @@ with open(f, 'w') as fh:
     json.dump(wf, fh, indent=2, ensure_ascii=False)
 " "$out" "${WEBHOOK_AUTH_CRED_ID:-}" "${POSTGRES_CRED_ID:-}" "${ANTHROPIC_CRED_ID:-}"
 done
-IMPORT_ORDER="mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-save memory-search memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
+IMPORT_ORDER="error-notification mcp-client reminder-factory reminder-runner mcp-weather-example workflow-builder mcp-builder mcp-library-manager credential-form memory-save memory-search memory-consolidation background-checker heartbeat review-batch instagram-token-rotation post-scheduler morning-briefing weekly-report sub-agent-runner agent-library-manager dmo-claw"
 
 # Fetch existing workflows once (for upsert: update if exists, create if not)
 EXISTING_WFS=$(curl -s "${N8N_BASE}/api/v1/workflows?limit=100" \
@@ -908,6 +936,35 @@ print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'set
   fi
 fi
 
+# ── 11d. Wire error workflow to critical workflows ──────────
+# Allowed keys in n8n's settings object — anything else triggers "request/body must NOT have additional properties"
+N8N_SETTINGS_WHITELIST="saveExecutionProgress,saveManualExecutions,saveDataErrorExecution,saveDataSuccessExecution,executionTimeout,errorWorkflow,timezone,executionOrder,callerPolicy,callerIds,timeSavedPerExecution,availableInMCP"
+ERROR_WF_ID=${WF_IDS['error-notification']}
+if [ -n "$ERROR_WF_ID" ]; then
+  for target in dmo-claw background-checker sub-agent-runner; do
+    target_id=${WF_IDS[$target]}
+    [ -z "$target_id" ] && continue
+    WF_JSON=$(curl -s "${N8N_BASE}/api/v1/workflows/${target_id}" \
+      -H "X-N8N-API-KEY: ${N8N_API_KEY}")
+    PATCHED_ERR=$(echo "$WF_JSON" | python3 -c "
+import sys, json
+ALLOWED = set('${N8N_SETTINGS_WHITELIST}'.split(','))
+wf = json.load(sys.stdin)
+nodes = wf.get('nodes') or wf.get('activeVersion',{}).get('nodes',[])
+conns = wf.get('connections') or wf.get('activeVersion',{}).get('connections',{})
+settings = {k: v for k, v in wf.get('settings',{}).items() if k in ALLOWED}
+settings['errorWorkflow'] = '${ERROR_WF_ID}'
+print(json.dumps({'name': wf['name'], 'nodes': nodes, 'connections': conns, 'settings': settings}))
+" 2>/dev/null)
+    if [ -n "$PATCHED_ERR" ]; then
+      echo "$PATCHED_ERR" | curl -s -X PUT "${N8N_BASE}/api/v1/workflows/${target_id}" \
+        -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+        -H "Content-Type: application/json" -d @- > /dev/null
+      echo "  ✅ ${target} → error workflow ${ERROR_WF_ID}"
+    fi
+  done
+fi
+
 fi  # end INSTALL_MODE guard for workflows
 
 # ── 12. Activate agent ───────────────────────────────────────
@@ -927,6 +984,14 @@ if [ -n "$AGENT_ID" ]; then
       break
     fi
   done
+fi
+
+# Activate Error Notification workflow (must be active for Error Trigger to fire)
+ERROR_NOTIF_ID=${WF_IDS['error-notification']}
+if [ -n "$ERROR_NOTIF_ID" ]; then
+  curl -s -X POST "${N8N_BASE}/api/v1/workflows/${ERROR_NOTIF_ID}/activate" \
+    -H "X-N8N-API-KEY: ${N8N_API_KEY}" > /dev/null 2>&1
+  echo -e "  ${GREEN}✅ Error Notification workflow activated${NC}"
 fi
 
 # Activate Reminder Runner (polls DB every minute for due reminders)
@@ -1367,7 +1432,9 @@ if sql.strip():
         exit(1)
 PYEOF
 
-if [ "$SKIP_PERSONA_WRITE" != "true" ]; then
+# Agents (tool instructions) are ALWAYS re-seeded — these are static config,
+# not user-editable state, and new keys added in this file must land on existing
+# installs regardless of whether the user chose "keep current personality".
 python3 - <<PYEOF2
 import subprocess, os
 pw = os.environ.get('POSTGRES_PASSWORD', '')
@@ -1391,7 +1458,6 @@ Call tools on MCP servers. Parameters:
 ALWAYS use this when the user wants to build an MCP server or integration.
 NEVER use WorkflowBuilder for MCP servers.
 Parameter: task (description of what the MCP server should do)
-NOTE: After build, manually deactivate + activate in n8n UI (webhook bug).
 
 ## Available MCP Servers:
 - Wetter: {mcp_url}/mcp/wetter (tool: get_weather, param: city)
@@ -1413,29 +1479,46 @@ WORKFLOW BUILDER (WorkflowBuilder tool):
 - Use for: building new n8n automations (NOT for MCP servers)
 - Input: JSON with task description
 
-MEMORY (memory_search / memory_save):
+MEMORY (memory_search / memory_save / memory_update / memory_delete):
 
-SAVE — Always save when the user reveals something about themselves:
-- Preferences, dislikes, habits ("I like...", "I hate...")
-- Personal facts (job, family, pets, hobbies, routines)
-- Decisions and opinions ("I decided to go with X")
-- Recurring topics and interests
-- Tools, workflows, systems they use
+SAVE — Always save when the user reveals something worth remembering:
+- Preferences, dislikes, habits, personal facts
+- Decisions, opinions, plans
+- DMO/member/region facts (opening hours, contacts, pricing, events)
 - Explicit requests ("Remember that...", "Don''t forget...")
-Category: preference, decision, contact, project, general
-Importance: 8-10 for explicit requests, 5-7 for casual mentions
-ALWAYS include user_id (sessionId) and scope (user or org) in the JSON input.
+
+Fields to provide in the JSON input to memory_save:
+- content (required): standalone sentence containing the fact
+- category (required): preference | decision | contact | project | member | region | event | general
+- importance (required): 1-10 — 8-10 for explicit requests, 5-7 for casual mentions, 1-4 for trivia
+- user_id (required): the sessionId from the system prompt (format oi:email@example.com)
+- scope (required): "user" (DEFAULT — personal to this user) or "org" (shared with the whole team)
+- tags (STRONGLY RECOMMENDED): 2-5 short lowercase keywords, e.g. ["restaurant","zugspitze","ruhetag"]. Tags drive hybrid search — always include them when there is a clear topic.
+- entity_name (STRONGLY RECOMMENDED when a clear subject exists): the main subject of the memory, e.g. "Panorama 2962", "Sandra Meier", "Garmisch-Partenkirchen". One entity per memory.
+
+SCOPE RULE (critical):
+- DEFAULT scope is "user". Every personal preference, routine, or user-specific context goes to "user".
+- Only use scope="org" when the content is clearly for the whole team: DMO policies, regional facts about the destination, member business data, shared decisions affecting everyone.
+- If in doubt → "user". Never put personal notes in org scope.
 
 SEARCH — Always search BEFORE answering when:
 - The user asks something they may have told you before
-- You want to make a recommendation or suggestion
-- The user asks "Do you remember...?" or "What do I like...?"
-- You are unsure if the user has preferences on a topic
-- A topic comes up that you have discussed before
-ALWAYS include user_id (sessionId) in the JSON input.
+- You want to make a recommendation
+- The user asks "Do you remember...?" or "What do I know about X?"
+- A topic comes up that was discussed before
 
-RULE: When in doubt, search/save one time too many rather than too few.
-You are a personal assistant — the better you know the user, the better you can help.
+memory_search input:
+- search_query (required)
+- user_id (required): sessionId from system prompt
+- match_count (optional, default 5, max 20)
+- category (optional): filter by category
+- entity (optional): filter by entity_name (ILIKE)
+- tags (optional): filter by tag array (must contain all)
+
+memory_update / memory_delete:
+- Both take id (from a prior search result) — you can only update/delete memories visible in the current user scope.
+
+RULE: When in doubt, save/search one time too many rather than too few. Always tag and name the entity so future searches can find it.
 
 HTTP (http_request):
 - Use for: simple API calls without authentication'),
@@ -1446,12 +1529,15 @@ HTTP (http_request):
 - Reference past conversations when relevant
 - Learn from corrections: when the user corrects you, save the correction
 - Never ask for information you have already saved
+- When saving, always enrich memories with tags (2-5 short keywords) and entity_name (the main subject) — this dramatically improves future retrieval.
 
-MEMORY SCOPING — IMPORTANT:
-- Personal memories (scope: user): preferences, habits, personal facts, user-specific context. Only visible to that user.
-- Organization memories (scope: org): DMO/company facts, regional knowledge, member business info, shared decisions. Visible to ALL users.
-- ALWAYS include user_id (the sessionId from the system prompt, format: oi:email@example.com) when saving or searching memory.
-- Default scope is user. Use org only for information that belongs to the whole organization.'),
+MEMORY SCOPING — CRITICAL:
+- DEFAULT scope is "user". Use it for ALL personal preferences, routines, user-specific context.
+- Use scope="org" ONLY for content that is clearly shared: DMO policies, regional facts about the destination, member business data, decisions affecting the whole team.
+- Examples — user scope: "Sandra prefers morning meetings", "Thomas is vegetarian", "my favorite restaurant is X".
+- Examples — org scope: "Gipfelrestaurant Panorama 2962 has Monday closed", "opening hours of the tourist information are 9-17", "the DMO uses Brevo for newsletters".
+- If in doubt → user. Never put a personal note into org.
+- ALWAYS include user_id (the sessionId from the system prompt, format: oi:email@example.com) when saving or searching memory.'),
 
   ('task_management', 'You can manage tasks for the user via the Task Manager tool.
 
@@ -1500,7 +1586,88 @@ PREFERENCES (set_preference action):
   * Websuche ("Was sind aktuelle Trends im Alpentourismus?")
 - Respond in the user''s language (check their language preference)
 - This introduction happens ONLY ONCE. If setup_done is true, skip this entirely and respond normally.
-- setup_done will be set to true automatically after your first response — you do not need to do this yourself.')
+- setup_done will be set to true automatically after your first response — you do not need to do this yourself.'),
+
+  ('knowledge_graph', 'You have a Knowledge Graph for tracking entities and relationships. Use it PROACTIVELY and SILENTLY.
+
+AUTOMATIC BEHAVIOR — do this without being asked:
+- When the user mentions a person, company, member business, project, place, or event that seems important: SEARCH the graph first, then SAVE if new, then RELATE if connections are apparent
+- When you learn that person X works at company Y, or event A is organized by B: create the relation immediately
+- When you save a memory with an entity_name: also ensure that entity exists in the knowledge graph
+- Do all of this silently — do NOT tell the user "I created an entity" unless they specifically ask about the graph
+
+WHEN TO SEARCH THE GRAPH (also automatic):
+- Before answering questions about a person, company, or project: check the graph for context
+- When the user mentions someone by name: search for existing connections that might be relevant
+- Use graph context to give more informed, connected answers
+
+TYPES are free text but auto-normalized (lowercase, snake_case). The tool returns existing_entity_types and existing_relation_types after save/relate — ALWAYS reuse these existing types when they fit instead of inventing new ones.
+- Example: if existing_entity_types includes "person", use "person" — not "human" or "individual"
+- Only create a new type when nothing existing fits
+- Be descriptive: "mentored_by" is better than "related_to"
+
+CONSISTENCY:
+- Entity names must be consistent — always use full canonical names (e.g. "Sandra Huber" not "Sandra")
+- The tool auto-detects duplicate entities and relations — no need to search before every save
+- The graph complements memory — memory stores facts and preferences, the graph stores relationships
+- Do NOT create entities for trivial mentions — only for subjects the user cares about or that come up repeatedly
+
+SCOPE — CRITICAL, SAME RULE AS MEMORY:
+Every entity has a scope. Choose wisely when saving:
+
+- scope="org" (user_id IS NULL) — visible to the WHOLE team. Use for:
+  * DMO colleagues (e.g. Sandra Huber = Marketing-Lead Zugspitzregion)
+  * Member businesses (restaurants, hotels, suppliers)
+  * Regional facts (Tourismusverband Zugspitzregion, Gemeinden, Bergbahnen)
+  * Destination events (DestinationCamp, Christkindlmarkt)
+  * Shared projects (campaigns, initiatives that affect multiple team members)
+
+- scope="user" (DEFAULT, user_id = current sessionId) — visible only to YOU. Use for:
+  * The user''s private contacts (their dentist, their family)
+  * Personal preferences attached to a specific entity
+  * Temporary notes about someone the rest of the team doesn''t need to know
+
+RULE OF THUMB: if the info would help any DMO team member do their job → org.
+If it''s only relevant to the current user personally → user.
+When in doubt → org for work-related entities, user for private ones.
+
+SEARCH/GRAPH/RELATE automatically return both your own entities AND org-shared ones.
+Cross-user leaks are prevented at the database layer — you cannot see or link to another user''s private entities.'),
+
+  ('error_log', 'WORKFLOW ERROR LOG — proactive failure awareness
+
+A global Error Notification workflow catches failures in the main agent, background-checker, and sub-agent-runner. Every failure is logged to memory_long with:
+- category = ''error''
+- importance = 8
+- tags include ''error'', ''workflow-failure'', and the workflow name
+- entity_name = ''workflow:<workflow_name>''
+- content = human-readable summary (workflow name, timestamp, error message, failing node, execution URL)
+- metadata (jsonb) contains execution_id, execution_url, execution_mode, workflow_id, workflow_name, node_name, error_name, error_message and a truncated error_stack
+
+WHEN TO CHECK PROACTIVELY:
+- User asks "ist was schiefgelaufen?", "lief alles?", "hat X funktioniert?", "did anything fail?", "any errors today?"
+- User references a workflow or system component in a doubtful tone ("was the background check ok?")
+- User reports unexpected behavior ("I didn''t get my reminder")
+- Before apologizing or guessing — first check if there''s a logged error that explains it
+
+HOW TO RETRIEVE — CRITICAL, FOLLOW EXACTLY:
+- ALWAYS call memory_search with JSON input and the category filter, NEVER with a free-text question.
+- Correct call: memory_search with input {{"search_query": "error", "category": "error"}}
+- The category filter narrows the search to error rows only. The search_query "error" then matches every error row via fulltext — you will see ALL recent failures.
+- For a specific workflow, use: {{"search_query": "<workflow_name>", "category": "error"}} — e.g. {{"search_query": "background", "category": "error"}}.
+- WHY this rule exists: the fulltext index uses AND-semantics with no stemming. A natural-language query like "error workflow failure recent" requires ALL four tokens to be present in the row — "failure" does NOT match "Failed", and "recent" matches nothing. You will get zero results and falsely conclude nothing failed. DO NOT make this mistake.
+- Do NOT add time words like "today", "last night", "recent" to search_query — they break the match. Filter by created_at mentally after you get the results (they arrive sorted by recency via time decay).
+- If the user asks about a specific period, just fetch errors with {{"search_query": "error", "category": "error"}} and look at created_at in the returned rows.
+
+MULTI-USER SCOPING:
+- Error rows are organization-wide (user_id IS NULL) — every admin sees every failure. This is intentional: operators must be able to debug any user''s failing workflow.
+- Do NOT filter by the current user_id when searching errors.
+
+HOW TO REPORT:
+- Summarize in the user''s language and your own tone — do not dump raw metadata
+- Mention what failed (workflow + node), when (relative time like "heute Nacht um 03:12"), and the error message
+- If the execution URL is present in the content, offer it as a clickable reference
+- Do NOT invent errors — if memory_search returns nothing for the relevant window, say so plainly')
 
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
@@ -1512,7 +1679,6 @@ result = subprocess.run(['psql','-h','localhost','-U','postgres','-d','postgres'
 if result.returncode != 0:
     print('agents SQL error:', result.stderr[:200])
 PYEOF2
-fi # end SKIP_PERSONA_WRITE guard for agents table
 
 # Seed DMO users (only when user setup ran)
 if [ "$SKIP_USERS" = "false" ] && [ -n "$DMO_USERS_SQL" ]; then
