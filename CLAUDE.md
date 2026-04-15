@@ -61,6 +61,24 @@ parameter (no DEFAULT) so a sub-workflow bug can never silently leak across user
 See [supabase/migrations/004_knowledge.sql](supabase/migrations/004_knowledge.sql)
 and [supabase/migrations/005_hybrid_search.sql](supabase/migrations/005_hybrid_search.sql).
 
+### Scope: `user` vs `org`
+
+Both `memory_save` and the Entity Manager tool accept a `scope` parameter:
+- `scope="user"` (default) → row gets `user_id = sessionId`, visible only to that user
+- `scope="org"` → row gets `user_id = NULL`, visible to the entire DMO team
+
+Use `org` for team knowledge (colleagues, member businesses, regional facts,
+destination events, shared projects). Default `user` for everything personal.
+The `knowledge_graph` agent prompt in the `agents` table teaches the agent
+when to pick which.
+
+### Static agents config vs persona rows
+
+`setup.sh` **always** re-seeds the `agents` table on `--force` (no gate on
+"keep current personality"). Rationale: `agents` rows are static tool config
+and must stay in sync with shipped code. The `soul` table is the personality
+source and is the only thing the "keep current" prompt actually protects.
+
 ## Database Schema
 
 The agent reads configuration from PostgreSQL at runtime via PostgREST (`http://172.17.0.1:8000`).
@@ -99,6 +117,7 @@ Telegram Trigger
       ├── Memory Save (toolWorkflow → memory-save)
       ├── Memory Update (toolCode, user_or_org scoped)
       ├── Memory Delete (toolCode, user_or_org scoped)
+      ├── Entity Manager (toolCode, KG search/save/update/relate/graph/delete, scope user|org)
       ├── HTTP Tool (toolCode)
       ├── Self Modify (toolCode)
       ├── Reminder (toolWorkflow → ReminderFactory, incl. list/edit/delete)
