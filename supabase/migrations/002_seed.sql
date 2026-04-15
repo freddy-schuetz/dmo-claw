@@ -42,9 +42,12 @@ AUTOMATISCHES VERHALTEN — ohne Aufforderung:
 
 TYPEN sind freier Text, werden aber normalisiert (lowercase, snake_case). Das Tool gibt nach save/relate die bereits genutzten Typen zurück — verwende diese wieder statt neue zu erfinden.
 
-MULTI-USER:
-- Neue Entities werden automatisch dem aktuellen User zugeordnet (user_id = sessionId)
-- Du siehst nur deine eigenen Entities + org-weite (user_id IS NULL)')
+SCOPE (wie bei memory_save):
+- scope="org" (user_id IS NULL) für Team-Wissen: DMO-Kolleg*innen, Mitgliedsbetriebe, Regionalfakten, Events, gemeinsame Projekte
+- scope="user" (DEFAULT) für persönliche Kontakte und private Notizen des aktuellen Users
+- Im Zweifel: arbeitsbezogenes Wissen → org, privates → user
+
+Suche/Graph/Relate zeigen automatisch sowohl deine eigenen als auch org-weite Entities an.')
 ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;
 
 -- User profile: created by setup.sh with real values (no placeholder needed here)

@@ -1432,7 +1432,9 @@ if sql.strip():
         exit(1)
 PYEOF
 
-if [ "$SKIP_PERSONA_WRITE" != "true" ]; then
+# Agents (tool instructions) are ALWAYS re-seeded — these are static config,
+# not user-editable state, and new keys added in this file must land on existing
+# installs regardless of whether the user chose "keep current personality".
 python3 - <<PYEOF2
 import subprocess, os
 pw = os.environ.get('POSTGRES_PASSWORD', '')
@@ -1610,10 +1612,27 @@ CONSISTENCY:
 - The graph complements memory — memory stores facts and preferences, the graph stores relationships
 - Do NOT create entities for trivial mentions — only for subjects the user cares about or that come up repeatedly
 
-MULTI-USER SCOPING:
-- New entities you save are automatically scoped to the current user (user_id = sessionId)
-- Search/graph/relate only see your own entities + org-shared ones (user_id IS NULL)
-- Cross-user leaks are prevented at the database layer — you cannot see or link to another user''s entities'),
+SCOPE — CRITICAL, SAME RULE AS MEMORY:
+Every entity has a scope. Choose wisely when saving:
+
+- scope="org" (user_id IS NULL) — visible to the WHOLE team. Use for:
+  * DMO colleagues (e.g. Sandra Huber = Marketing-Lead Zugspitzregion)
+  * Member businesses (restaurants, hotels, suppliers)
+  * Regional facts (Tourismusverband Zugspitzregion, Gemeinden, Bergbahnen)
+  * Destination events (DestinationCamp, Christkindlmarkt)
+  * Shared projects (campaigns, initiatives that affect multiple team members)
+
+- scope="user" (DEFAULT, user_id = current sessionId) — visible only to YOU. Use for:
+  * The user''s private contacts (their dentist, their family)
+  * Personal preferences attached to a specific entity
+  * Temporary notes about someone the rest of the team doesn''t need to know
+
+RULE OF THUMB: if the info would help any DMO team member do their job → org.
+If it''s only relevant to the current user personally → user.
+When in doubt → org for work-related entities, user for private ones.
+
+SEARCH/GRAPH/RELATE automatically return both your own entities AND org-shared ones.
+Cross-user leaks are prevented at the database layer — you cannot see or link to another user''s private entities.'),
 
   ('error_log', 'WORKFLOW ERROR LOG — proactive failure awareness
 
@@ -1660,7 +1679,6 @@ result = subprocess.run(['psql','-h','localhost','-U','postgres','-d','postgres'
 if result.returncode != 0:
     print('agents SQL error:', result.stderr[:200])
 PYEOF2
-fi # end SKIP_PERSONA_WRITE guard for agents table
 
 # Seed DMO users (only when user setup ran)
 if [ "$SKIP_USERS" = "false" ] && [ -n "$DMO_USERS_SQL" ]; then
